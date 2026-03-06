@@ -1,0 +1,121 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      String   @default("member") // admin, member
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+  deals    Deal[]
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  industry    String
+  vertical    String // e.g., "Fashion", "Beauty", "Tech", "Food"
+  description String?
+  budget      Int? // in cents
+  status      String   @default("active") // active, inactive, paused
+  contactName String?
+  contactEmail String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals Deal[]
+  notes ClientNote[]
+}
+
+model ClientNote {
+  id        String   @id @default(cuid())
+  clientId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model Creator {
+  id          String   @id @default(cuid())
+  name        String
+  platform    String // "Instagram", "TikTok", "YouTube", "Twitter"
+  handle      String
+  followers   Int
+  archetype   String // e.g., "Lifestyle", "Fitness", "Tech Reviewer", "Fashion"
+  vertical    String // e.g., "Fashion", "Beauty", "Tech", "Food"
+  engagement  Float? // engagement rate percentage
+  categories  String // JSON array of categories
+  bio         String?
+  location    String?
+  email       String?
+  status      String   @default("active") // active, inactive
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals Deal[]
+}
+
+model Deal {
+  id          String   @id @default(cuid())
+  clientId    String
+  creatorId   String?
+  userId      String
+  title       String
+  description String?
+  status      String   @default("open") // open, in_progress, closed, cancelled
+  dealValue   Int? // in cents
+  startDate   DateTime?
+  endDate     DateTime?
+  priority    String   @default("medium") // low, medium, high
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  creator Creator? @relation(fields: [creatorId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  updates DealUpdate[]
+}
+
+model DealUpdate {
+  id        String   @id @default(cuid())
+  dealId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String // "user" or "assistant"
+  content   String
+  metadata  String? // JSON metadata
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Match {
+  id          String   @id @default(cuid())
+  clientId    String
+  creatorId   String
+  score       Float // 0-100 match score
+  reason      String // Why this is a good match
+  status      String   @default("pending") // pending, accepted, rejected
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
