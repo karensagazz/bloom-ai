@@ -8,6 +8,15 @@ const nextConfig = {
       },
     ],
   },
+  // Ensure server-only packages aren't bundled for client
+  experimental: {
+    serverComponentsExternalPackages: ['googleapis', '@slack/web-api'],
+  },
+  // Production optimizations for Vercel
+  output: 'standalone',
+  poweredByHeader: false,
+  compress: true,
+  swcMinify: true,
 }
 
 module.exports = nextConfig

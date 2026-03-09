@@ -1,0 +1,174 @@
+// PDF Brand Brief Importer
+// Uses Claude's native document understanding to extract brand context from PDFs
+
+import Anthropic from '@anthropic-ai/sdk'
+import { PrismaClient } from '@prisma/client'
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+})
+
+// Extracted brand context from PDF
+export interface ExtractedBrandContext {
+  brandGoals?: string[]
+  campaignStrategy?: string
+  targetAudience?: string
+  keyMessages?: string[]
+  pastCampaignHighlights?: string[]
+  budgetIndications?: string
+  preferredPlatforms?: string[]
+  restrictions?: string[]
+  rawSummary: string
+}
+
+/**
+ * Import a PDF brand brief and extract structured context using Claude
+ * @param brandId - The brand ID to associate this document with
+ * @param pdfBuffer - Buffer containing the PDF file data
+ * @param filename - Original filename of the PDF
+ * @param prisma - Prisma client instance
+ * @returns The created KnowledgeDocument ID
+ */
+export async function importBrandPDF(
+  brandId: string,
+  pdfBuffer: Buffer,
+  filename: string,
+  prisma: PrismaClient
+): Promise<string> {
+  console.log(`[PDF Import] Processing ${filename} for brand ${brandId}`)
+
+  // Validate file size (Claude has 32MB limit)
+  const sizeMB = pdfBuffer.length / (1024 * 1024)
+  if (sizeMB > 32) {
+    throw new Error(`PDF file too large (${sizeMB.toFixed(1)}MB). Maximum size is 32MB.`)
+  }
+
+  console.log(`[PDF Import] File size: ${sizeMB.toFixed(2)}MB`)
+
+  try {
+    // Convert PDF to base64 for Claude API
+    const base64Data = pdfBuffer.toString('base64')
+
+    // Call Claude with document understanding
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: {
+                type: 'base64',
+                media_type: 'application/pdf',
+                data: base64Data,
+              },
+            },
+            {
+              type: 'text',
+              text: `Extract brand context from this document. This is likely a brand brief, strategy deck, or campaign presentation.
+
+Analyze the document and extract structured information. Return ONLY valid JSON with this structure:
+
+{
+  "brandGoals": ["goal1", "goal2"],
+  "campaignStrategy": "detailed strategy description",
+  "targetAudience": "audience description",
+  "keyMessages": ["message1", "message2"],
+  "pastCampaignHighlights": ["highlight1", "highlight2"],
+  "budgetIndications": "budget info if present",
+  "preferredPlatforms": ["platform1", "platform2"],
+  "restrictions": ["restriction1", "restriction2"],
+  "rawSummary": "2-3 sentence overview of the entire document"
+}
+
+IMPORTANT RULES:
+1. If a field doesn't have clear information in the document, omit it or use an empty array
+2. Be specific and extract exact quotes where possible
+3. Focus on actionable information for influencer marketing
+4. Return ONLY valid JSON - no markdown, no explanations`,
+            },
+          ],
+        },
+      ],
+    })
+
+    // Extract text response from Claude
+    const textBlock = response.content.find(
+      (block): block is Anthropic.TextBlock => block.type === 'text'
+    )
+
+    if (!textBlock) {
+      throw new Error('No text response from Claude')
+    }
+
+    // Parse JSON response (handle potential markdown code blocks)
+    let extracted: ExtractedBrandContext
+    try {
+      // Remove markdown code blocks if present
+      const jsonText = textBlock.text.replace(/```json\n?|\n?```/g, '').trim()
+      extracted = JSON.parse(jsonText)
+    } catch (parseError) {
+      console.error('[PDF Import] Failed to parse Claude response:', textBlock.text)
+      throw new Error('Failed to parse extracted brand context from PDF')
+    }
+
+    console.log('[PDF Import] Successfully extracted brand context')
+    console.log(`  - Brand Goals: ${extracted.brandGoals?.length || 0}`)
+    console.log(`  - Key Messages: ${extracted.keyMessages?.length || 0}`)
+    console.log(`  - Platforms: ${extracted.preferredPlatforms?.length || 0}`)
+
+    // Find or create "Brand Briefs" folder
+    let folder = await prisma.knowledgeFolder.findFirst({
+      where: {
+        brandId,
+        name: 'Brand Briefs',
+      },
+    })
+
+    if (!folder) {
+      console.log('[PDF Import] Creating "Brand Briefs" folder')
+      folder = await prisma.knowledgeFolder.create({
+        data: {
+          brandId,
+          name: 'Brand Briefs',
+          description: 'Imported brand strategy documents and presentations',
+          icon: 'file-text',
+          folderType: 'custom',
+          orderIndex: 0,
+        },
+      })
+    }
+
+    // Create knowledge document with extracted content
+    const document = await prisma.knowledgeDocument.create({
+      data: {
+        brandId,
+        folderId: folder.id,
+        title: filename,
+        content: JSON.stringify(extracted, null, 2),
+        documentType: 'manual',
+        isAutoGenerated: false,
+        icon: 'file-pdf',
+        tags: JSON.stringify(['pdf-import', 'brand-brief', 'strategy']),
+      },
+    })
+
+    console.log(`[PDF Import] Created document ${document.id} in folder "${folder.name}"`)
+
+    return document.id
+  } catch (error) {
+    console.error('[PDF Import] Error processing PDF:', error)
+    throw error
+  }
+}
+
+/**
+ * Parse JSON response from Claude (handles markdown code blocks)
+ */
+function parseJSONResponse(text: string): any {
+  // Remove markdown code blocks
+  const cleaned = text.replace(/```json\n?|\n?```/g, '').trim()
+  return JSON.parse(cleaned)
+}

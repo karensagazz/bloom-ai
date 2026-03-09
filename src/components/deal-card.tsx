@@ -9,7 +9,7 @@ interface DealCardProps {
     dealValue?: number | null
     priority: string
     createdAt: Date | string
-    client: {
+    brand: {
       name: string
     }
     creator?: {
@@ -44,7 +44,7 @@ export function DealCard({ deal }: DealCardProps) {
       <div className="space-y-1 text-sm text-stone-600">
         <div className="flex items-center gap-2">
           <User className="h-3 w-3" />
-          <span>{deal.client.name}</span>
+          <span>{deal.brand.name}</span>
         </div>
 
         {deal.creator && (

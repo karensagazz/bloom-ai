@@ -1,0 +1,268 @@
+'use client'
+
+import { Edit, Trash2, Download, FileText, RefreshCw } from 'lucide-react'
+import InsightCard from './InsightCard'
+import LearningCard from './LearningCard'
+import TrendCard from './TrendCard'
+import RecommendationCard from './RecommendationCard'
+import InfluencerCard from './InfluencerCard'
+
+interface DocumentViewerProps {
+  document: any | null
+  loading?: boolean
+  onEdit?: () => void
+  onDelete?: () => void
+}
+
+export default function DocumentViewer({
+  document,
+  loading,
+  onEdit,
+  onDelete,
+}: DocumentViewerProps) {
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-stone-400">
+        <RefreshCw className="h-5 w-5 animate-spin mr-2" />
+        <p>Loading document...</p>
+      </div>
+    )
+  }
+
+  if (!document) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-stone-400">
+        <FileText className="h-12 w-12 mb-3 opacity-30" />
+        <p className="text-lg">Select a document to view</p>
+        <p className="text-sm mt-1">
+          Click any document in the tree to see its contents
+        </p>
+      </div>
+    )
+  }
+
+  const renderContent = () => {
+    // Manual document - show markdown/text content
+    if (document.documentType === 'manual') {
+      return (
+        <div className="prose prose-sm max-w-none">
+          <p className="text-stone-700 whitespace-pre-wrap">
+            {document.content || 'This document is empty. Click Edit to add content.'}
+          </p>
+        </div>
+      )
+    }
+
+    // Auto-generated document with sourceData
+    const data = document.sourceData || []
+
+    if (data.length === 0) {
+      return (
+        <div className="text-center py-8 text-stone-500">
+          <p>No data available for this document yet.</p>
+          <p className="text-sm mt-1">Sync more campaigns to populate.</p>
+        </div>
+      )
+    }
+
+    switch (document.documentType) {
+      case 'influencer_notes':
+        return (
+          <div className="space-y-4">
+            {data.map((item: any) => (
+              <InsightCard
+                key={item.id}
+                insight={{
+                  id: item.id,
+                  category: item.noteType,
+                  sentiment: item.sentiment,
+                  title: item.influencer?.name || 'Unknown Influencer',
+                  description: item.content,
+                  confidence: item.confidence,
+                  influencerName: item.influencer?.handle,
+                  platform: item.influencer?.platform,
+                  year: item.year,
+                }}
+              />
+            ))}
+          </div>
+        )
+
+      case 'influencer_list':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {data.map((item: any) => (
+              <InfluencerCard key={item.id} influencer={item} />
+            ))}
+          </div>
+        )
+
+      case 'insight_collection':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {data.map((item: any) => (
+              <InsightCard key={item.id} insight={item} />
+            ))}
+          </div>
+        )
+
+      case 'learning_collection':
+        return (
+          <div className="space-y-4">
+            {data.map((item: any) => (
+              <LearningCard key={item.id} learning={item} />
+            ))}
+          </div>
+        )
+
+      case 'trend_report':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {data.map((item: any) => (
+              <TrendCard key={item.id} trend={item} />
+            ))}
+          </div>
+        )
+
+      case 'recommendation_list':
+        return (
+          <div className="space-y-4">
+            {data.map((item: any) => (
+              <RecommendationCard key={item.id} recommendation={item} />
+            ))}
+          </div>
+        )
+
+      case 'sow_collection':
+        return (
+          <div className="space-y-3">
+            {data.map((item: any) => (
+              <div
+                key={item.id}
+                className="border border-stone-200 rounded-lg p-4 bg-white"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-medium text-stone-900">
+                      {item.influencerName || 'Unknown Creator'}
+                    </h3>
+                    <p className="text-sm text-stone-500">
+                      {item.campaignName || 'Untitled Campaign'}
+                    </p>
+                  </div>
+                  {item.dealValue && (
+                    <span className="text-green-700 font-semibold">
+                      {item.dealValue}
+                    </span>
+                  )}
+                </div>
+                {item.platform && (
+                  <span className="inline-block mt-2 text-xs px-2 py-0.5 bg-stone-100 rounded">
+                    {item.platform}
+                  </span>
+                )}
+                {item.contractType && (
+                  <span className="inline-block mt-2 ml-2 text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+                    {item.contractType.replace('_', ' ')}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+
+      case 'slack_context':
+        return (
+          <div className="space-y-2">
+            {data.map((item: any) => (
+              <div
+                key={item.id}
+                className="border-l-2 border-stone-200 pl-3 py-1"
+              >
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium text-stone-700">
+                    {item.userName || 'Unknown'}
+                  </span>
+                  <span className="text-stone-400 text-xs">
+                    {new Date(item.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <p className="text-sm text-stone-600 mt-0.5">{item.content}</p>
+              </div>
+            ))}
+          </div>
+        )
+
+      default:
+        return (
+          <p className="text-stone-500">
+            Unknown document type: {document.documentType}
+          </p>
+        )
+    }
+  }
+
+  return (
+    <div className="h-full flex flex-col bg-white overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-stone-200 flex-shrink-0">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-stone-900">
+              {document.title}
+            </h1>
+            <div className="flex items-center gap-3 mt-2 text-sm text-stone-500">
+              {document.isAutoGenerated ? (
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-md text-xs font-medium">
+                  Auto-Generated
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-md text-xs font-medium">
+                  Manual
+                </span>
+              )}
+              <span>
+                Updated {new Date(document.updatedAt).toLocaleDateString()}
+              </span>
+              {document.sourceData && (
+                <span className="text-stone-400">
+                  {document.sourceData.length} items
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {!document.isAutoGenerated && onEdit && (
+              <button
+                onClick={onEdit}
+                className="p-2 hover:bg-stone-100 rounded-md transition-colors"
+                title="Edit document"
+              >
+                <Edit className="h-4 w-4 text-stone-600" />
+              </button>
+            )}
+            {!document.isAutoGenerated && onDelete && (
+              <button
+                onClick={onDelete}
+                className="p-2 hover:bg-red-50 rounded-md transition-colors"
+                title="Delete document"
+              >
+                <Trash2 className="h-4 w-4 text-red-600" />
+              </button>
+            )}
+            <button
+              className="p-2 hover:bg-stone-100 rounded-md transition-colors"
+              title="Export"
+            >
+              <Download className="h-4 w-4 text-stone-600" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6">{renderContent()}</div>
+    </div>
+  )
+}

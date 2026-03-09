@@ -5,12 +5,51 @@ import { CreatorCard } from '@/components/creator-card'
 import { prisma } from '@/lib/db'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
+// Parse follower count strings like "250K", "1.2M" to numbers
+function parseFollowerCount(raw: string | null): number {
+  if (!raw) return 0
+  const lower = raw.toLowerCase().replace(/,/g, '')
+  const mMatch = lower.match(/(\d+(?:\.\d+)?)\s*m/)
+  if (mMatch) return Math.round(parseFloat(mMatch[1]) * 1_000_000)
+  const kMatch = lower.match(/(\d+(?:\.\d+)?)\s*k/)
+  if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1_000)
+  const plain = parseFloat(lower)
+  return isNaN(plain) ? 0 : Math.round(plain)
+}
+
+// Parse engagement rate strings like "4.2%", "3.5" to numbers
+function parseEngagementRate(raw: string | null): number {
+  if (!raw) return 3.5 // Default fallback
+  const match = raw.match(/(\d+(?:\.\d+)?)/)
+  return match ? parseFloat(match[1]) : 3.5
+}
+
 async function getCreators() {
-  return await prisma.creator.findMany({
+  // Get influencers from BrandInfluencer table (actual data source)
+  const influencers = await prisma.brandInfluencer.findMany({
+    include: {
+      brand: {
+        select: { name: true }
+      }
+    },
     orderBy: {
-      followers: 'desc',
+      totalCampaigns: 'desc',
     },
   })
+
+  // Map to Creator format with real data from tracker
+  return influencers.map(inf => ({
+    id: inf.id,
+    name: inf.name,
+    platform: inf.platform || 'Unknown',
+    handle: inf.email || `@${inf.name.toLowerCase().replace(/\s+/g, '')}`,
+    followers: parseFollowerCount(inf.followerCount), // Real follower count from tracker
+    archetype: inf.cohort || 'Lifestyle', // Cohort as archetype
+    vertical: inf.cohort || 'Lifestyle', // Vertical from cohort column
+    engagement: parseEngagementRate(inf.engagementRate), // Real engagement rate from tracker
+    niche: inf.cohort || 'Lifestyle', // Vertical from cohort column
+    image: `https://ui-avatars.com/api/?name=${encodeURIComponent(inf.name)}&background=random`,
+  }))
 }
 
 export default async function CreatorsPage() {

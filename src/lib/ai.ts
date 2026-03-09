@@ -1,21 +1,101 @@
 import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 })
 
-export async function getChatCompletion(messages: Array<{ role: string; content: string }>) {
+// Anthropic client for Claude Sonnet (cheaper extraction tasks)
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || '',
+})
+
+// Get a cheap structured completion using Claude Sonnet
+// Used for data extraction tasks where we need JSON output
+export async function getCheapStructuredCompletion(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number = 4000
+): Promise<string> {
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4-turbo-preview',
-      messages: messages as any,
-      temperature: 0.7,
-      max_tokens: 1000,
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userPrompt }
+      ],
     })
 
-    return response.choices[0]?.message?.content || 'No response generated.'
+    // Extract text from response
+    const textBlock = response.content.find((block) => block.type === 'text')
+    return textBlock?.text || '{}'
   } catch (error) {
-    console.error('OpenAI API Error:', error)
+    console.error('Anthropic API Error:', error)
+    throw error
+  }
+}
+
+// Parse JSON from AI response, handling markdown code blocks
+export function parseJSONResponse(text: string): any {
+  // Remove markdown code blocks if present
+  let cleaned = text.trim()
+
+  // Handle ```json ... ``` blocks
+  const jsonBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  if (jsonBlockMatch) {
+    cleaned = jsonBlockMatch[1].trim()
+  }
+
+  // Try to parse
+  try {
+    return JSON.parse(cleaned)
+  } catch (error) {
+    // Try to find JSON array or object in the text
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/)
+    const objectMatch = cleaned.match(/\{[\s\S]*\}/)
+
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0])
+      } catch {}
+    }
+
+    if (objectMatch) {
+      try {
+        return JSON.parse(objectMatch[0])
+      } catch {}
+    }
+
+    console.error('Failed to parse JSON response:', text)
+    return null
+  }
+}
+
+export async function getChatCompletion(messages: Array<{ role: string; content: string }>) {
+  try {
+    // Convert messages to Anthropic format
+    // First message should be system if role is 'system', otherwise it's a user message
+    const systemMessage = messages.find(m => m.role === 'system')
+    const userMessages = messages.filter(m => m.role !== 'system')
+
+    const anthropicMessages = userMessages.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content
+    }))
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: systemMessage?.content || 'You are a helpful assistant.',
+      messages: anthropicMessages as any,
+      temperature: 0.7,
+    })
+
+    const textBlock = response.content.find((block) => block.type === 'text')
+    return textBlock?.text || 'No response generated.'
+  } catch (error) {
+    console.error('Anthropic API Error:', error)
     return 'Sorry, I encountered an error processing your request.'
   }
 }
