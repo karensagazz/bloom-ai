@@ -5,6 +5,16 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
+// Timeout for AI API calls (prevents indefinite hangs in Slack bot)
+const SLACK_AI_TIMEOUT_MS = 45000  // 45 seconds max per AI call
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
+  )
+  return Promise.race([promise, timeout])
+}
+
 // Bot personality and system prompt
 const BOT_SYSTEM_PROMPT = `You are Bloom, a knowledgeable assistant for the Superbloom team (an influencer marketing agency).
 
@@ -482,13 +492,17 @@ export async function runSlackAgent(options: {
 
   const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}`
 
-  let response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
-    system: systemPrompt,
-    tools,
-    messages,
-  })
+  let response = await withTimeout(
+    anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: systemPrompt,
+      tools,
+      messages,
+    }),
+    SLACK_AI_TIMEOUT_MS,
+    'Slack bot initial response'
+  )
 
   // Agent loop - process tool calls until we get a final response
   let iterationCount = 0
@@ -536,13 +550,17 @@ export async function runSlackAgent(options: {
     })
 
     // Get next response
-    response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      system: systemPrompt,
-      tools,
-      messages,
-    })
+    response = await withTimeout(
+      anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2048,
+        system: systemPrompt,
+        tools,
+        messages,
+      }),
+      SLACK_AI_TIMEOUT_MS,
+      `Slack bot tool response (iteration ${iterationCount})`
+    )
   }
 
   // Extract final text response

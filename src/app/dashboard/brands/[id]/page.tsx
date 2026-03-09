@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
@@ -214,6 +214,9 @@ export default function BrandDetailPage() {
   const [deleting, setDeleting] = useState(false)
   const [syncProgress, setSyncProgress] = useState<{ progress: number; step: string } | null>(null)
 
+  // Ref to prevent double loadBrand() calls during sync completion
+  const syncLoadCompletedRef = useRef(false)
+
   // PDF import
   const [uploadingPdf, setUploadingPdf] = useState(false)
 
@@ -273,7 +276,11 @@ export default function BrandDetailPage() {
           if (data.status === 'synced' || data.status === 'error') {
             setSyncing(false)
             setSyncProgress(null)
-            loadBrand() // Refresh brand data
+            // Only load brand if we haven't already (prevents race condition)
+            if (!syncLoadCompletedRef.current) {
+              syncLoadCompletedRef.current = true
+              loadBrand()
+            }
           }
         }
       } catch (e) {
@@ -290,6 +297,8 @@ export default function BrandDetailPage() {
   }, [syncing, brandId])
 
   async function handleSync() {
+    // Reset the ref at start of new sync
+    syncLoadCompletedRef.current = false
     setSyncing(true)
     try {
       const response = await fetch(`/api/brands/${brandId}/sync`, { method: 'POST' })
@@ -303,7 +312,11 @@ export default function BrandDetailPage() {
 
       const result = await response.json()
       console.log('Sync completed:', result)
-      await loadBrand()
+      // Only load brand if polling hasn't already done it (prevents race condition)
+      if (!syncLoadCompletedRef.current) {
+        syncLoadCompletedRef.current = true
+        await loadBrand()
+      }
     } catch (e) {
       console.error('Failed to sync', e)
       alert('Network error during sync')

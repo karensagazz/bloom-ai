@@ -598,23 +598,22 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
     // Import qualitative extractor for learnings
     const { generateBrandLearnings } = await import('./qualitative-extractor')
 
-    // Update progress to show parallel analysis starting
-    await updateSyncProgress(prisma, brandId, 'detecting_trends', 'Running parallel analysis...')
+    // Update progress to show analysis starting
+    await updateSyncProgress(prisma, brandId, 'detecting_trends', 'Analyzing patterns...')
 
-    // === RUN AI ANALYSIS OPERATIONS IN PARALLEL (major time savings) ===
-    // These operations don't depend on each other, so we can run them simultaneously
-    console.log('[Sync] Starting parallel AI analysis (trends, recommendations, learnings)...')
-    const parallelStartTime = Date.now()
+    // === PHASE 1: Run trends and recommendations in parallel ===
+    // These don't depend on each other, so run simultaneously
+    console.log('[Sync] Phase 1: Starting parallel AI analysis (trends, recommendations)...')
+    const phase1StartTime = Date.now()
 
-    const [trendsResult, recommendationsResult, learningsResult] = await Promise.allSettled([
+    const [trendsResult, recommendationsResult] = await Promise.allSettled([
       detectTrends(brandId, prisma),
       generateStrategicRecommendations(brandId, prisma),
-      generateBrandLearnings(brandId, prisma),
     ])
 
-    console.log(`[Sync] Parallel AI analysis completed in ${Date.now() - parallelStartTime}ms`)
+    console.log(`[Sync] Phase 1 completed in ${Date.now() - phase1StartTime}ms`)
 
-    // Process trends result
+    // Process and SAVE trends result (must be in DB before learnings)
     if (trendsResult.status === 'fulfilled' && trendsResult.value.length > 0) {
       const trends = trendsResult.value
       await prisma.trendAnalysis.createMany({
@@ -669,12 +668,22 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
       console.error(`[Sync] Recommendation generation failed:`, recommendationsResult.reason)
     }
 
-    // Process learnings result
-    await updateSyncProgress(prisma, brandId, 'generating_learnings')
-    if (learningsResult.status === 'fulfilled' && learningsResult.value > 0) {
-      console.log(`[Sync] Generated ${learningsResult.value} brand learnings`)
-    } else if (learningsResult.status === 'rejected') {
-      console.error(`[Sync] Brand learnings generation failed:`, learningsResult.reason)
+    // === PHASE 2: Generate learnings AFTER trends are saved ===
+    // Learnings need trends in the database to include them in the analysis
+    await updateSyncProgress(prisma, brandId, 'generating_learnings', 'Synthesizing learnings...')
+    console.log('[Sync] Phase 2: Generating learnings (with trends now in DB)...')
+    const phase2StartTime = Date.now()
+
+    try {
+      const learningsCount = await generateBrandLearnings(brandId, prisma)
+      console.log(`[Sync] Phase 2 completed in ${Date.now() - phase2StartTime}ms`)
+      if (learningsCount > 0) {
+        console.log(`[Sync] Generated ${learningsCount} brand learnings`)
+      } else {
+        console.log(`[Sync] No learnings generated (check data sources)`)
+      }
+    } catch (error) {
+      console.error(`[Sync] Brand learnings generation failed:`, error)
     }
 
     // Generate/update knowledge base structure (runs after learnings complete)
