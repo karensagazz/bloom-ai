@@ -21,6 +21,11 @@ import {
   detectTrends,
   generateStrategicRecommendations,
 } from './qualitative-extractor'
+import {
+  updateSyncProgress,
+  resetSyncProgress,
+  completeSyncProgress,
+} from './sync-progress'
 
 // ============================================================================
 // TAB ROUTING - Explicit mapping of tabs to data types
@@ -458,13 +463,15 @@ export async function syncAllBrandTrackers(
   totalRecords: number
   totalInfluencers: number
 }> {
-  // Mark brand as syncing
+  // Mark brand as syncing and reset progress
   await prisma.brand.update({
     where: { id: brandId },
     data: { syncStatus: 'syncing' },
   })
+  await resetSyncProgress(prisma, brandId)
 
   // Get all trackers for this brand
+  await updateSyncProgress(prisma, brandId, 'discovering_tabs')
   const trackers = await prisma.campaignTracker.findMany({
     where: { brandId },
   })
@@ -492,7 +499,11 @@ export async function syncAllBrandTrackers(
   // Sync each tracker
   const results: Array<{ trackerId: string; label: string | null } & SyncResult> = []
 
-  for (const tracker of trackers) {
+  await updateSyncProgress(prisma, brandId, 'fetching_data', `${trackers.length} tracker(s)`)
+
+  for (let i = 0; i < trackers.length; i++) {
+    const tracker = trackers[i]
+    await updateSyncProgress(prisma, brandId, 'processing_tabs', tracker.label || `Tracker ${i + 1}/${trackers.length}`)
     const result = await syncCampaignTracker(tracker.id, prisma)
     results.push({
       trackerId: tracker.id,
@@ -500,6 +511,10 @@ export async function syncAllBrandTrackers(
       ...result,
     })
   }
+
+  // After all trackers synced, continue with extraction phases
+  await updateSyncProgress(prisma, brandId, 'extracting_campaigns')
+  await updateSyncProgress(prisma, brandId, 'building_roster')
 
   // Calculate totals
   const totalTabs = results.reduce((sum, r) => sum + r.tabCount, 0)
@@ -580,6 +595,7 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
     })
 
     // Detect trends
+    await updateSyncProgress(prisma, brandId, 'detecting_trends')
     try {
       const trends = await detectTrends(brandId, prisma)
       if (trends.length > 0) {
@@ -600,13 +616,14 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
             status: 'active',
           })),
         })
-        console.log(`  ✅ Detected ${trends.length} trends`)
+        console.log(`[Sync] Detected ${trends.length} trends`)
       }
     } catch (error) {
-      console.error(`  ❌ Trend detection failed:`, error)
+      console.error(`[Sync] Trend detection failed:`, error)
     }
 
     // Generate strategic recommendations
+    await updateSyncProgress(prisma, brandId, 'generating_recommendations')
     try {
       const recommendations = await generateStrategicRecommendations(brandId, prisma)
       if (recommendations.length > 0) {
@@ -631,31 +648,37 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
             status: 'pending',
           })),
         })
-        console.log(`  ✅ Generated ${recommendations.length} strategic recommendations`)
+        console.log(`[Sync] Generated ${recommendations.length} strategic recommendations`)
       }
     } catch (error) {
-      console.error(`  ❌ Recommendation generation failed:`, error)
+      console.error(`[Sync] Recommendation generation failed:`, error)
     }
 
     // Generate brand learnings from insights and trends
+    await updateSyncProgress(prisma, brandId, 'generating_learnings')
     try {
       const { generateBrandLearnings } = await import('./qualitative-extractor')
       const learningsCount = await generateBrandLearnings(brandId, prisma)
       if (learningsCount > 0) {
-        console.log(`  ✅ Generated ${learningsCount} brand learnings`)
+        console.log(`[Sync] Generated ${learningsCount} brand learnings`)
       }
     } catch (error) {
-      console.error(`  ❌ Brand learnings generation failed:`, error)
+      console.error(`[Sync] Brand learnings generation failed:`, error)
     }
 
     // Generate/update knowledge base structure
+    await updateSyncProgress(prisma, brandId, 'building_knowledge')
     try {
       const { generateKnowledgeStructure } = await import('./knowledge-generator')
       const result = await generateKnowledgeStructure(brandId, prisma)
-      console.log(`  ✅ Knowledge base updated: ${result.foldersCreated} folders, ${result.documentsCreated} documents`)
+      console.log(`[Sync] Knowledge base updated: ${result.foldersCreated} folders, ${result.documentsCreated} documents`)
     } catch (error) {
-      console.error(`  ❌ Knowledge base generation failed:`, error)
+      console.error(`[Sync] Knowledge base generation failed:`, error)
     }
+
+    // Mark sync as complete
+    await updateSyncProgress(prisma, brandId, 'finalizing')
+    await completeSyncProgress(prisma, brandId)
 
     console.log('=== ADVANCED ANALYSIS COMPLETE ===\n')
 

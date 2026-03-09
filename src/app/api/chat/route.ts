@@ -107,16 +107,16 @@ QUERY CLASSIFICATION:
 **RULE 3: CLEARLY SEPARATE FACTS FROM INSIGHTS**
 Structure your responses as:
 
-📊 **Facts:** [Direct data from campaign records]
+**What we know:** [Direct data from campaign records]
 - Use exact numbers and quotes from RETRIEVED DATA
 - Cite sources: CampaignRecord, BrandInfluencer, etc.
 
-💡 **Insights:** [Patterns detected by AI analysis]
+**What this means:** [Patterns detected by AI analysis]
 - Only mention insights that appear in RETRIEVED DATA under "RELEVANT INSIGHTS"
 - Include confidence levels shown in the data
 - Distinguish between HIGH confidence insights (0.8+) and MEDIUM/LOW confidence (< 0.8)
 
-🎯 **Recommendations:** [Strategic suggestions, if applicable]
+**What I'd suggest:** [Strategic suggestions, if applicable]
 - Only provide if question is strategic ("should we...?", "what do you recommend...?")
 - Base recommendations on trends/insights from RETRIEVED DATA
 - Include rationale and supporting evidence

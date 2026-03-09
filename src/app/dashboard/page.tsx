@@ -7,29 +7,40 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { prisma } from '@/lib/db'
 
 async function getDashboardData() {
-  const brands = await prisma.brand.findMany({
-    orderBy: {
-      createdAt: 'desc',
-    },
-    take: 10,
-  })
+  console.log('[Dashboard] Loading data...')
+  console.log('[Dashboard] DATABASE_URL configured:', !!process.env.DATABASE_URL)
 
-  // HIDDEN: Creators functionality
-  // const creators = await prisma.creator.findMany({
-  //   orderBy: {
-  //     followers: 'desc',
-  //   },
-  //   take: 8,
-  // })
+  try {
+    const brands = await prisma.brand.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: 10,
+    })
 
-  const stats = {
-    totalBrands: await prisma.brand.count(),
-    totalCreators: await prisma.creator.count(),
-    syncedBrands: await prisma.brand.count({ where: { syncStatus: 'synced' } }),
-    pendingSync: await prisma.brand.count({ where: { syncStatus: 'pending' } }),
+    console.log('[Dashboard] Brands found:', brands.length)
+    if (brands.length === 0) {
+      console.log('[Dashboard] No brands in database - check if DB is seeded')
+    }
+
+    const stats = {
+      totalBrands: await prisma.brand.count(),
+      totalCreators: await prisma.creator.count(),
+      syncedBrands: await prisma.brand.count({ where: { syncStatus: 'synced' } }),
+      pendingSync: await prisma.brand.count({ where: { syncStatus: 'pending' } }),
+    }
+
+    console.log('[Dashboard] Stats:', JSON.stringify(stats))
+
+    return { brands, stats }
+  } catch (error) {
+    console.error('[Dashboard] Database error:', error)
+    // Return empty state so page still renders
+    return {
+      brands: [],
+      stats: { totalBrands: 0, totalCreators: 0, syncedBrands: 0, pendingSync: 0 },
+    }
   }
-
-  return { brands, stats }
 }
 
 export default async function DashboardPage() {

@@ -176,7 +176,7 @@ export function generateResponseText(answer: StructuredAnswer): string {
     }
 
     if (answer.uncertainties && answer.uncertainties.length > 0) {
-      parts.push('\n**⚠️ Data Quality Notes:**')
+      parts.push('\n**Note on data quality:**')
       answer.uncertainties.forEach(u => parts.push(`- ${u}`))
     }
   } else if (answer.answerType === 'strategic') {
@@ -228,8 +228,8 @@ export function buildEnhancedContext(retrievalResult: any): string {
   }
 
   if (retrievalResult.dataQualityWarnings && retrievalResult.dataQualityWarnings.length > 0) {
-    parts.push('\n**DATA QUALITY WARNINGS:**')
-    retrievalResult.dataQualityWarnings.forEach((w: string) => parts.push(`⚠️ ${w}`))
+    parts.push('\n**Data quality notes:**')
+    retrievalResult.dataQualityWarnings.forEach((w: string) => parts.push(`- ${w}`))
   }
 
   return parts.join('\n')

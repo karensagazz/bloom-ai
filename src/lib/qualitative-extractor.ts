@@ -988,84 +988,171 @@ export async function generateBrandLearnings(
   console.log(`[Brand Learnings] Generating strategic learnings for brand ${brandId}`)
 
   try {
-    // Get brand with related intelligence data
+    // Get brand with ALL related data - not just insights/trends
     const brand = await prisma.brand.findUnique({
       where: { id: brandId },
       include: {
+        // Campaign insights - include all, not just high confidence
         campaignInsights: {
-          where: {
-            confidence: { in: ['medium', 'high'] }, // Only use confident insights
-          },
           orderBy: { createdAt: 'desc' },
-          take: 50, // Recent insights
+          take: 100,
         },
+        // Trend analyses
         trendAnalyses: {
-          where: {
-            status: 'active',
-            confidence: { in: ['medium', 'high'] },
-          },
+          where: { status: 'active' },
           orderBy: { detectedAt: 'desc' },
-          take: 20,
+          take: 30,
         },
+        // Full campaign record data - not just 5 fields
         campaignRecords: {
           select: {
             platform: true,
             year: true,
+            quarter: true,
             status: true,
             dealValue: true,
+            totalValue: true,
             contentType: true,
+            influencerName: true,
+            handle: true,
+            campaignName: true,
+            recordType: true,
+            contractType: true,
+            deliverables: true,
+            paymentTerms: true,
+            usageRights: true,
+            exclusivity: true,
           },
+          take: 200,
+        },
+        // Influencer performance notes - previously ignored
+        influencerNotes: {
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+          include: {
+            influencer: {
+              select: { name: true },
+            },
+          },
+        },
+        // Influencer roster metadata - previously ignored
+        brandInfluencers: {
+          select: {
+            name: true,
+            platform: true,
+            totalCampaigns: true,
+            estimatedRate: true,
+            engagementRate: true,
+            followerCount: true,
+            deliverables: true,
+            notes: true,
+          },
+          take: 50,
         },
       },
     })
 
     if (!brand) {
-      console.log(`❌ Brand ${brandId} not found`)
+      console.log(`[Brand Learnings] Brand ${brandId} not found`)
       return 0
     }
 
-    // Skip if no data to analyze
-    if (brand.campaignInsights.length === 0 && brand.trendAnalyses.length === 0) {
-      console.log(`⚠️  No insights or trends to synthesize learnings from`)
+    // Check for ANY meaningful data to learn from
+    const hasData =
+      brand.campaignRecords.length >= 3 ||
+      brand.campaignInsights.length > 0 ||
+      brand.trendAnalyses.length > 0 ||
+      brand.influencerNotes.length > 0 ||
+      brand.brandInfluencers.length > 0
+
+    if (!hasData) {
+      console.log(`[Brand Learnings] Skipping - insufficient data (need 3+ campaigns or other data)`)
       return 0
     }
+
+    console.log(`[Brand Learnings] Data sources:`, {
+      campaigns: brand.campaignRecords.length,
+      insights: brand.campaignInsights.length,
+      trends: brand.trendAnalyses.length,
+      influencerNotes: brand.influencerNotes.length,
+      influencers: brand.brandInfluencers.length,
+    })
 
     const systemPrompt = `You are a strategic marketing analyst that synthesizes campaign data into high-level brand learnings.
 Your job is to identify cross-campaign patterns and generate actionable strategic recommendations.
 You must respond with ONLY valid JSON - no explanations or markdown.`
 
-    const userPrompt = `Synthesize strategic learnings for "${brand.name}" based on their campaign data.
+    const userPrompt = `Synthesize strategic learnings for "${brand.name}" from ALL available data.
 
-CAMPAIGN INSIGHTS (${brand.campaignInsights.length} total):
+CAMPAIGN DATA (${brand.campaignRecords.length} campaigns):
+${JSON.stringify(brand.campaignRecords.slice(0, 40).map(c => ({
+  campaign: c.campaignName,
+  influencer: c.influencerName,
+  handle: c.handle,
+  platform: c.platform,
+  year: c.year,
+  quarter: c.quarter,
+  status: c.status,
+  dealValue: c.dealValue,
+  contentType: c.contentType,
+  deliverables: c.deliverables,
+  paymentTerms: c.paymentTerms,
+  usageRights: c.usageRights,
+  exclusivity: c.exclusivity,
+})), null, 2)}
+
+INFLUENCER ROSTER (${brand.brandInfluencers.length} influencers):
+${JSON.stringify(brand.brandInfluencers.map(i => ({
+  name: i.name,
+  platform: i.platform,
+  campaigns: i.totalCampaigns,
+  rate: i.estimatedRate,
+  engagement: i.engagementRate,
+  followers: i.followerCount,
+  notes: i.notes,
+})), null, 2)}
+
+INFLUENCER PERFORMANCE NOTES (${brand.influencerNotes.length} observations):
+${JSON.stringify(brand.influencerNotes.slice(0, 30).map(n => ({
+  influencer: n.influencer?.name || 'Unknown',
+  type: n.noteType,
+  sentiment: n.sentiment,
+  note: n.content,
+})), null, 2)}
+
+${brand.campaignInsights.length > 0 ? `CAMPAIGN INSIGHTS (${brand.campaignInsights.length}):
 ${JSON.stringify(brand.campaignInsights.slice(0, 20).map(i => ({
   category: i.category,
   sentiment: i.sentiment,
   title: i.title,
   platform: i.platform,
   year: i.year,
-})), null, 2)}
+})), null, 2)}` : ''}
 
-DETECTED TRENDS (${brand.trendAnalyses.length} total):
+${brand.trendAnalyses.length > 0 ? `DETECTED TRENDS (${brand.trendAnalyses.length}):
 ${JSON.stringify(brand.trendAnalyses.map(t => ({
   type: t.trendType,
   metric: t.metric,
   direction: t.direction,
   title: t.title,
   timeframe: t.timeframe,
-})), null, 2)}
+})), null, 2)}` : ''}
 
-CAMPAIGN SUMMARY:
+DATA SUMMARY:
 - Total campaigns: ${brand.campaignRecords.length}
-- Platforms: ${Array.from(new Set(brand.campaignRecords.map(c => c.platform).filter(Boolean))).join(', ')}
-- Years covered: ${Array.from(new Set(brand.campaignRecords.map(c => c.year).filter(Boolean))).join(', ')}
+- Influencer roster size: ${brand.brandInfluencers.length}
+- Platforms: ${Array.from(new Set(brand.campaignRecords.map(c => c.platform).filter(Boolean))).join(', ') || 'Various'}
+- Years covered: ${Array.from(new Set(brand.campaignRecords.map(c => c.year).filter(Boolean))).join(', ') || 'Various'}
 
-TASK: Generate 3-5 strategic learnings that would help this brand optimize their influencer marketing.
+TASK: Generate 3-7 strategic learnings that would help this brand optimize their influencer marketing.
 
 LEARNING CATEGORIES:
 - "platform_strategy": Which platforms work best, where to allocate budget
-- "budget_optimization": How to spend more efficiently
+- "budget_optimization": How to spend more efficiently, deal value patterns
 - "content_type": What content formats perform well
 - "timing": Seasonal patterns, best times to run campaigns
+- "influencer_relationships": Top performers, who to prioritize, red flags
+- "contract_patterns": Payment terms, usage rights, exclusivity insights
 - "audience": Target audience insights and fit
 
 PRIORITY LEVELS:
@@ -1100,17 +1187,17 @@ Return JSON array:
 
 If insufficient data for meaningful learnings, return: []`
 
-    console.log(`[Brand Learnings] Synthesizing from ${brand.campaignInsights.length} insights and ${brand.trendAnalyses.length} trends`)
+    console.log(`[Brand Learnings] Synthesizing from all data sources...`)
 
     const response = await getCheapStructuredCompletion(systemPrompt, userPrompt)
     const parsed = parseJSONResponse(response)
 
     if (!Array.isArray(parsed)) {
-      console.log(`❌ Brand learning generation did not return an array`)
+      console.log(`[Brand Learnings] AI did not return an array`)
       return 0
     }
 
-    console.log(`✅ Generated ${parsed.length} brand learnings`)
+    console.log(`[Brand Learnings] Generated ${parsed.length} learnings`)
 
     // Upsert each learning (deduplicate by title)
     let created = 0

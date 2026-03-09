@@ -48,6 +48,8 @@ model Brand {
   // Sync status (aggregate across all trackers)
   lastSyncedAt      DateTime?
   syncStatus        String   @default("pending") // pending, syncing, synced, error
+  syncProgress      Int?     @default(0)         // 0-100 percentage
+  syncStep          String?                      // Current step description
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

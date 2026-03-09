@@ -73,14 +73,15 @@ export async function POST(request: NextRequest) {
 
 // Handle @mention in a channel
 async function handleMention(event: any) {
-  console.log('[Slack Bot] Processing mention:', {
-    channel: event.channel,
-    user: event.user,
-    text: event.text?.slice(0, 100),
-    thread_ts: event.thread_ts,
-  })
+  const startTime = Date.now()
+  console.log('[Slack Bot] ===== MENTION START =====')
+  console.log('[Slack Bot] Channel:', event.channel)
+  console.log('[Slack Bot] User:', event.user)
+  console.log('[Slack Bot] Text:', event.text?.slice(0, 100))
+  console.log('[Slack Bot] Thread:', event.thread_ts)
 
   const client = await getSlackClient()
+  console.log(`[Slack Bot] Got Slack client (${Date.now() - startTime}ms)`)
   const text = event.text.replace(/<@[A-Z0-9]+>/g, '').trim() // Remove @mentions
   const channelId = event.channel
   const threadTs = event.thread_ts || event.ts
@@ -98,13 +99,13 @@ async function handleMention(event: any) {
     // No brand connected to this channel
     await client.chat.postMessage({
       channel: channelId,
-      text: "👋 Hey! I don't see this channel connected to a brand yet. You can connect it in the Bloom dashboard under the brand's Slack tab.",
+      text: "Hey! I don't see this channel connected to a brand yet. You can set that up in the Bloom dashboard under the brand's Slack settings.",
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: "👋 Hey! I don't see this channel connected to a brand yet. You can connect it in the Bloom dashboard under the brand's Slack tab.",
+            text: "Hey! I don't see this channel connected to a brand yet. You can set that up in the Bloom dashboard under the brand's Slack settings.",
           },
         },
       ],
@@ -157,7 +158,9 @@ async function handleMention(event: any) {
   }
 
   try {
-    console.log('[Slack Bot] Running agent for brand:', brand.name, 'question:', text.slice(0, 50))
+    console.log('[Slack Bot] Running agent for brand:', brand.name)
+    console.log('[Slack Bot] Question:', text.slice(0, 100))
+    const agentStartTime = Date.now()
 
     // Run the agent
     const result = await runSlackAgent({
@@ -167,7 +170,7 @@ async function handleMention(event: any) {
       channelHistory,
     })
 
-    console.log('[Slack Bot] Agent response received, posting to Slack...')
+    console.log(`[Slack Bot] Agent complete (${Date.now() - agentStartTime}ms)`)
 
     // Post response in thread with mrkdwn formatting
     await client.chat.postMessage({
@@ -185,19 +188,20 @@ async function handleMention(event: any) {
       thread_ts: threadTs,
     })
 
-    console.log('[Slack Bot] Response posted successfully')
+    console.log(`[Slack Bot] ===== COMPLETE: ${Date.now() - startTime}ms =====`)
   } catch (error) {
-    console.error('[Slack Bot] Agent error:', error)
+    console.error(`[Slack Bot] ===== ERROR after ${Date.now() - startTime}ms =====`)
+    console.error('[Slack Bot] Error:', error)
 
     await client.chat.postMessage({
       channel: channelId,
-      text: "Sorry, I ran into an issue processing that question. 😅 Try asking again or check if your campaign trackers are synced.",
+      text: "Sorry, I ran into an issue with that question. Try asking again, or check if your campaign trackers are synced.",
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: "Sorry, I ran into an issue processing that question. 😅 Try asking again or check if your campaign trackers are synced.",
+            text: "Sorry, I ran into an issue with that question. Try asking again, or check if your campaign trackers are synced.",
           },
         },
       ],
@@ -225,13 +229,13 @@ async function handleDirectMessage(event: any) {
   // For DMs, provide a helpful message about using the bot in brand channels
   await client.chat.postMessage({
     channel: channelId,
-    text: "👋 Hey! I work best when you @mention me in a brand's Slack channel. That way, I have context about which brand you're asking about.\n\nTo use me:\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\nExample: `@Bloom who are our top performing creators this quarter?`",
+    text: "Hey! I work best when you @mention me in a brand's Slack channel - that way I know which brand you're asking about.\n\nTo use me:\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\nExample: `@Bloom who are our top performing creators this quarter?`",
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: "👋 Hey! I work best when you @mention me in a brand's Slack channel. That way, I have context about which brand you're asking about.\n\n*To use me:*\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\n_Example:_ `@Bloom who are our top performing creators this quarter?`",
+          text: "Hey! I work best when you @mention me in a brand's Slack channel - that way I know which brand you're asking about.\n\n*To use me:*\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\n_Example:_ `@Bloom who are our top performing creators this quarter?`",
         },
       },
     ],

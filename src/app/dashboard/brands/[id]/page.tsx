@@ -212,6 +212,7 @@ export default function BrandDetailPage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{ progress: number; step: string } | null>(null)
 
   // PDF import
   const [uploadingPdf, setUploadingPdf] = useState(false)
@@ -257,6 +258,36 @@ export default function BrandDetailPage() {
   useEffect(() => {
     loadBrand()
   }, [brandId])
+
+  // Poll for sync progress while syncing
+  useEffect(() => {
+    if (!syncing || !brandId) return
+
+    const pollProgress = async () => {
+      try {
+        const res = await fetch(`/api/brands/${brandId}/sync-progress`)
+        if (res.ok) {
+          const data = await res.json()
+          setSyncProgress({ progress: data.progress, step: data.step })
+          // Stop polling if sync completed
+          if (data.status === 'synced' || data.status === 'error') {
+            setSyncing(false)
+            setSyncProgress(null)
+            loadBrand() // Refresh brand data
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch sync progress', e)
+      }
+    }
+
+    // Initial poll
+    pollProgress()
+
+    // Poll every 1 second
+    const interval = setInterval(pollProgress, 1000)
+    return () => clearInterval(interval)
+  }, [syncing, brandId])
 
   async function handleSync() {
     setSyncing(true)
@@ -574,12 +605,28 @@ export default function BrandDetailPage() {
                     >
                       {brand.syncStatus}
                     </span>
-                    {brand.lastSyncedAt && (
+                    {brand.lastSyncedAt && !syncing && (
                       <span className="text-xs text-stone-500">
                         Last synced {formatDistanceToNow(new Date(brand.lastSyncedAt))} ago
                       </span>
                     )}
                   </div>
+
+                  {/* Sync Progress Bar */}
+                  {syncing && syncProgress && (
+                    <div className="mt-3 w-full max-w-md">
+                      <div className="flex justify-between text-xs text-stone-600 mb-1">
+                        <span>{syncProgress.step}</span>
+                        <span>{syncProgress.progress}%</span>
+                      </div>
+                      <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-stone-800 rounded-full transition-all duration-300"
+                          style={{ width: `${syncProgress.progress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
