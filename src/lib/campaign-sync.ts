@@ -587,6 +587,7 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
 
     // === ADVANCED ANALYSIS (when all trackers synced) ===
     console.log('\n=== ALL TRACKERS SYNCED: RUNNING ADVANCED ANALYSIS ===')
+    const analysisStartTime = Date.now()
 
     // Clear old trends before generating new ones
     await prisma.trendAnalysis.updateMany({
@@ -594,79 +595,89 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
       data: { status: 'historical' },
     })
 
-    // Detect trends
-    await updateSyncProgress(prisma, brandId, 'detecting_trends')
-    try {
-      const trends = await detectTrends(brandId, prisma)
-      if (trends.length > 0) {
-        await prisma.trendAnalysis.createMany({
-          data: trends.map((trend) => ({
-            brandId,
-            trendType: trend.trendType,
-            metric: trend.metric,
-            direction: trend.direction,
-            title: trend.title,
-            description: trend.description,
-            dataPoints: JSON.stringify({}), // Could store actual data points
-            magnitude: trend.magnitude || null,
-            confidence: trend.confidence,
-            timeframe: trend.timeframe,
-            platforms: trend.platforms ? JSON.stringify(trend.platforms) : null,
-            influencers: trend.influencers ? JSON.stringify(trend.influencers) : null,
-            status: 'active',
-          })),
-        })
-        console.log(`[Sync] Detected ${trends.length} trends`)
-      }
-    } catch (error) {
-      console.error(`[Sync] Trend detection failed:`, error)
+    // Import qualitative extractor for learnings
+    const { generateBrandLearnings } = await import('./qualitative-extractor')
+
+    // Update progress to show parallel analysis starting
+    await updateSyncProgress(prisma, brandId, 'detecting_trends', 'Running parallel analysis...')
+
+    // === RUN AI ANALYSIS OPERATIONS IN PARALLEL (major time savings) ===
+    // These operations don't depend on each other, so we can run them simultaneously
+    console.log('[Sync] Starting parallel AI analysis (trends, recommendations, learnings)...')
+    const parallelStartTime = Date.now()
+
+    const [trendsResult, recommendationsResult, learningsResult] = await Promise.allSettled([
+      detectTrends(brandId, prisma),
+      generateStrategicRecommendations(brandId, prisma),
+      generateBrandLearnings(brandId, prisma),
+    ])
+
+    console.log(`[Sync] Parallel AI analysis completed in ${Date.now() - parallelStartTime}ms`)
+
+    // Process trends result
+    if (trendsResult.status === 'fulfilled' && trendsResult.value.length > 0) {
+      const trends = trendsResult.value
+      await prisma.trendAnalysis.createMany({
+        data: trends.map((trend) => ({
+          brandId,
+          trendType: trend.trendType,
+          metric: trend.metric,
+          direction: trend.direction,
+          title: trend.title,
+          description: trend.description,
+          dataPoints: JSON.stringify({}),
+          magnitude: trend.magnitude || null,
+          confidence: trend.confidence,
+          timeframe: trend.timeframe,
+          platforms: trend.platforms ? JSON.stringify(trend.platforms) : null,
+          influencers: trend.influencers ? JSON.stringify(trend.influencers) : null,
+          status: 'active',
+        })),
+      })
+      console.log(`[Sync] Detected ${trends.length} trends`)
+    } else if (trendsResult.status === 'rejected') {
+      console.error(`[Sync] Trend detection failed:`, trendsResult.reason)
     }
 
-    // Generate strategic recommendations
+    // Process recommendations result
     await updateSyncProgress(prisma, brandId, 'generating_recommendations')
-    try {
-      const recommendations = await generateStrategicRecommendations(brandId, prisma)
-      if (recommendations.length > 0) {
-        // Clear old pending recommendations
-        await prisma.strategicRecommendation.deleteMany({
-          where: { brandId, status: 'pending' },
-        })
+    if (recommendationsResult.status === 'fulfilled' && recommendationsResult.value.length > 0) {
+      const recommendations = recommendationsResult.value
+      // Clear old pending recommendations
+      await prisma.strategicRecommendation.deleteMany({
+        where: { brandId, status: 'pending' },
+      })
 
-        await prisma.strategicRecommendation.createMany({
-          data: recommendations.map((rec) => ({
-            brandId,
-            category: rec.category,
-            priority: rec.priority,
-            title: rec.title,
-            recommendation: rec.recommendation,
-            rationale: rec.rationale,
-            basedOn: JSON.stringify({ trends: true, learnings: true }), // Could be more specific
-            confidence: rec.confidence,
-            expectedImpact: rec.expectedImpact || null,
-            effort: rec.effort || null,
-            timeframe: rec.timeframe || null,
-            status: 'pending',
-          })),
-        })
-        console.log(`[Sync] Generated ${recommendations.length} strategic recommendations`)
-      }
-    } catch (error) {
-      console.error(`[Sync] Recommendation generation failed:`, error)
+      await prisma.strategicRecommendation.createMany({
+        data: recommendations.map((rec) => ({
+          brandId,
+          category: rec.category,
+          priority: rec.priority,
+          title: rec.title,
+          recommendation: rec.recommendation,
+          rationale: rec.rationale,
+          basedOn: JSON.stringify({ trends: true, learnings: true }),
+          confidence: rec.confidence,
+          expectedImpact: rec.expectedImpact || null,
+          effort: rec.effort || null,
+          timeframe: rec.timeframe || null,
+          status: 'pending',
+        })),
+      })
+      console.log(`[Sync] Generated ${recommendations.length} strategic recommendations`)
+    } else if (recommendationsResult.status === 'rejected') {
+      console.error(`[Sync] Recommendation generation failed:`, recommendationsResult.reason)
     }
 
-    // Generate brand learnings from insights and trends
+    // Process learnings result
     await updateSyncProgress(prisma, brandId, 'generating_learnings')
-    try {
-      const { generateBrandLearnings } = await import('./qualitative-extractor')
-      const learningsCount = await generateBrandLearnings(brandId, prisma)
-      if (learningsCount > 0) {
-        console.log(`[Sync] Generated ${learningsCount} brand learnings`)
-      }
-    } catch (error) {
-      console.error(`[Sync] Brand learnings generation failed:`, error)
+    if (learningsResult.status === 'fulfilled' && learningsResult.value > 0) {
+      console.log(`[Sync] Generated ${learningsResult.value} brand learnings`)
+    } else if (learningsResult.status === 'rejected') {
+      console.error(`[Sync] Brand learnings generation failed:`, learningsResult.reason)
     }
 
-    // Generate/update knowledge base structure
+    // Generate/update knowledge base structure (runs after learnings complete)
     await updateSyncProgress(prisma, brandId, 'building_knowledge')
     try {
       const { generateKnowledgeStructure } = await import('./knowledge-generator')
@@ -680,7 +691,7 @@ async function updateBrandSyncStatus(brandId: string, prisma: PrismaClient) {
     await updateSyncProgress(prisma, brandId, 'finalizing')
     await completeSyncProgress(prisma, brandId)
 
-    console.log('=== ADVANCED ANALYSIS COMPLETE ===\n')
+    console.log(`=== ADVANCED ANALYSIS COMPLETE (${Date.now() - analysisStartTime}ms total) ===\n`)
 
     return
   }

@@ -988,22 +988,23 @@ export async function generateBrandLearnings(
   console.log(`[Brand Learnings] Generating strategic learnings for brand ${brandId}`)
 
   try {
-    // Get brand with ALL related data - not just insights/trends
+    // Get brand with related data - OPTIMIZED: only load what we actually use in prompt
+    // This reduces query time and memory usage significantly
     const brand = await prisma.brand.findUnique({
       where: { id: brandId },
       include: {
-        // Campaign insights - include all, not just high confidence
+        // Campaign insights - we only use 20 in prompt
         campaignInsights: {
           orderBy: { createdAt: 'desc' },
-          take: 100,
+          take: 25,  // Reduced from 100
         },
-        // Trend analyses
+        // Trend analyses - we use all in prompt
         trendAnalyses: {
           where: { status: 'active' },
           orderBy: { detectedAt: 'desc' },
-          take: 30,
+          take: 15,  // Reduced from 30
         },
-        // Full campaign record data - not just 5 fields
+        // Campaign records - we only use 40 in prompt
         campaignRecords: {
           select: {
             platform: true,
@@ -1023,19 +1024,19 @@ export async function generateBrandLearnings(
             usageRights: true,
             exclusivity: true,
           },
-          take: 200,
+          take: 50,  // Reduced from 200
         },
-        // Influencer performance notes - previously ignored
+        // Influencer notes - we only use 30 in prompt
         influencerNotes: {
           orderBy: { createdAt: 'desc' },
-          take: 100,
+          take: 35,  // Reduced from 100
           include: {
             influencer: {
               select: { name: true },
             },
           },
         },
-        // Influencer roster metadata - previously ignored
+        // Influencer roster - we use all in prompt
         brandInfluencers: {
           select: {
             name: true,
@@ -1047,7 +1048,7 @@ export async function generateBrandLearnings(
             deliverables: true,
             notes: true,
           },
-          take: 50,
+          take: 25,  // Reduced from 50
         },
       },
     })
@@ -1199,45 +1200,38 @@ If insufficient data for meaningful learnings, return: []`
 
     console.log(`[Brand Learnings] Generated ${parsed.length} learnings`)
 
-    // Upsert each learning (deduplicate by title)
-    let created = 0
-    for (const learning of parsed) {
-      await prisma.brandLearning.upsert({
-        where: {
-          // Use a composite unique key if you have one, otherwise use findFirst + create/update
-          brandId_title: {
-            brandId,
-            title: learning.title || 'Untitled Learning',
-          },
-        },
-        create: {
-          brandId,
-          category: learning.category || 'platform_strategy',
-          priority: learning.priority || 'medium',
-          title: learning.title || 'Untitled Learning',
-          description: learning.description || '',
-          recommendation: learning.recommendation || null,
-          confidence: learning.confidence || 'medium',
-          sampleSize: learning.sampleSize || null,
-          platforms: learning.platforms ? JSON.stringify(learning.platforms) : null,
-          timeframe: learning.timeframe || null,
-          status: 'active',
-        },
-        update: {
-          category: learning.category || 'platform_strategy',
-          priority: learning.priority || 'medium',
-          description: learning.description || '',
-          recommendation: learning.recommendation || null,
-          confidence: learning.confidence || 'medium',
-          sampleSize: learning.sampleSize || null,
-          platforms: learning.platforms ? JSON.stringify(learning.platforms) : null,
-          timeframe: learning.timeframe || null,
-        },
-      })
-      created++
-    }
+    // BATCHED: Use transaction with deleteMany + createMany instead of sequential upserts
+    // This is much faster than N individual upsert calls
+    const learningsData = parsed.map(learning => ({
+      brandId,
+      category: learning.category || 'platform_strategy',
+      priority: learning.priority || 'medium',
+      title: learning.title || 'Untitled Learning',
+      description: learning.description || '',
+      recommendation: learning.recommendation || null,
+      confidence: learning.confidence || 'medium',
+      sampleSize: learning.sampleSize || null,
+      platforms: learning.platforms ? JSON.stringify(learning.platforms) : null,
+      timeframe: learning.timeframe || null,
+      status: 'active',
+    }))
 
-    console.log(`[Brand Learnings] Created/updated ${created} learnings`)
+    // Delete old learnings and create new ones in a single transaction
+    await prisma.$transaction(async (tx) => {
+      // Remove existing active learnings for this brand
+      await tx.brandLearning.deleteMany({
+        where: { brandId, status: 'active' },
+      })
+
+      // Create all new learnings in one operation
+      if (learningsData.length > 0) {
+        await tx.brandLearning.createMany({
+          data: learningsData,
+        })
+      }
+    })
+
+    console.log(`[Brand Learnings] Created ${parsed.length} learnings (batch operation)`)
 
     return created
   } catch (error) {

@@ -9,6 +9,9 @@ export async function POST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const startTime = Date.now()
+  console.log(`[Sync] Starting sync for brand ${params.id}`)
+
   try {
     const brand = await prisma.brand.findUnique({
       where: { id: params.id },
@@ -89,9 +92,21 @@ export async function POST(
       }
     }
 
-    return NextResponse.json(results)
-  } catch (error) {
-    console.error('Failed to sync brand:', error)
-    return NextResponse.json({ error: 'Failed to sync brand' }, { status: 500 })
+    const elapsed = Date.now() - startTime
+    console.log(`[Sync] Completed in ${elapsed}ms`)
+    return NextResponse.json({ ...results, elapsed })
+  } catch (error: any) {
+    const elapsed = Date.now() - startTime
+    console.error(`[Sync] Failed after ${elapsed}ms:`, error)
+
+    // Always return JSON so client can parse the response
+    // (Vercel 504 timeout returns HTML, which causes the "Unexpected token" error)
+    return NextResponse.json({
+      success: false,
+      error: error.message || 'Failed to sync brand',
+      elapsed,
+      // Indicate partial data may have been saved if we got past initial stages
+      partial: elapsed > 30000,
+    }, { status: 500 })
   }
 }

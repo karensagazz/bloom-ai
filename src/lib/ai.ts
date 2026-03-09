@@ -10,6 +10,16 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
 })
 
+// Timeout for AI API calls (prevents indefinite hangs during sync)
+const AI_TIMEOUT_MS = 45000  // 45 seconds max per AI call
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
+  )
+  return Promise.race([promise, timeout])
+}
+
 // Get a cheap structured completion using Claude Sonnet
 // Used for data extraction tasks where we need JSON output
 export async function getCheapStructuredCompletion(
@@ -18,14 +28,18 @@ export async function getCheapStructuredCompletion(
   maxTokens: number = 4000
 ): Promise<string> {
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt }
-      ],
-    })
+    const response = await withTimeout(
+      anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: userPrompt }
+        ],
+      }),
+      AI_TIMEOUT_MS,
+      'AI extraction'
+    )
 
     // Extract text from response
     const textBlock = response.content.find((block) => block.type === 'text')
@@ -84,13 +98,17 @@ export async function getChatCompletion(messages: Array<{ role: string; content:
       content: m.content
     }))
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: systemMessage?.content || 'You are a helpful assistant.',
-      messages: anthropicMessages as any,
-      temperature: 0.7,
-    })
+    const response = await withTimeout(
+      anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemMessage?.content || 'You are a helpful assistant.',
+        messages: anthropicMessages as any,
+        temperature: 0.7,
+      }),
+      AI_TIMEOUT_MS,
+      'Chat completion'
+    )
 
     const textBlock = response.content.find((block) => block.type === 'text')
     return textBlock?.text || 'No response generated.'
