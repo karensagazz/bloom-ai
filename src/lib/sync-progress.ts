@@ -51,19 +51,24 @@ export async function updateSyncProgress(
   stageKey: SyncStageKey,
   detail?: string
 ): Promise<void> {
-  const progress = calculateProgress(stageKey)
-  const label = getStageLabel(stageKey)
-  const step = detail ? `${label}: ${detail}` : `${label}...`
+  try {
+    const progress = calculateProgress(stageKey)
+    const label = getStageLabel(stageKey)
+    const step = detail ? `${label}: ${detail}` : `${label}...`
 
-  await prisma.brand.update({
-    where: { id: brandId },
-    data: {
-      syncProgress: progress,
-      syncStep: step,
-    },
-  })
+    await prisma.brand.update({
+      where: { id: brandId },
+      data: {
+        syncProgress: progress,
+        syncStep: step,
+      },
+    })
 
-  console.log(`[Sync Progress] ${brandId}: ${progress}% - ${step}`)
+    console.log(`[Sync Progress] ${brandId}: ${progress}% - ${step}`)
+  } catch (error) {
+    // Don't fail the entire sync if progress update fails
+    console.error(`[Sync Progress] Failed to update progress:`, error)
+  }
 }
 
 /**
@@ -73,13 +78,17 @@ export async function resetSyncProgress(
   prisma: PrismaClient,
   brandId: string
 ): Promise<void> {
-  await prisma.brand.update({
-    where: { id: brandId },
-    data: {
-      syncProgress: 0,
-      syncStep: 'Starting sync...',
-    },
-  })
+  try {
+    await prisma.brand.update({
+      where: { id: brandId },
+      data: {
+        syncProgress: 0,
+        syncStep: 'Starting sync...',
+      },
+    })
+  } catch (error) {
+    console.error(`[Sync Progress] Failed to reset progress:`, error)
+  }
 }
 
 /**
@@ -89,13 +98,17 @@ export async function completeSyncProgress(
   prisma: PrismaClient,
   brandId: string
 ): Promise<void> {
-  await prisma.brand.update({
-    where: { id: brandId },
-    data: {
-      syncProgress: 100,
-      syncStep: 'Sync complete',
-    },
-  })
+  try {
+    await prisma.brand.update({
+      where: { id: brandId },
+      data: {
+        syncProgress: 100,
+        syncStep: 'Sync complete',
+      },
+    })
+  } catch (error) {
+    console.error(`[Sync Progress] Failed to complete progress:`, error)
+  }
 }
 
 export { SYNC_STAGES, type SyncStageKey }
