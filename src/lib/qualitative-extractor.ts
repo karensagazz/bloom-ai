@@ -1233,7 +1233,7 @@ If insufficient data for meaningful learnings, return: []`
 
     console.log(`[Brand Learnings] Created ${parsed.length} learnings (batch operation)`)
 
-    return created
+    return parsed.length
   } catch (error) {
     console.error('[Brand Learnings] Failed to generate learnings:', error)
     return 0
