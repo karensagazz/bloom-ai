@@ -176,20 +176,30 @@ async function handleMention(event: any) {
   console.log('[Slack Bot] Using brand:', brand.name)
 
   // Get thread context if this is a thread reply
+  // conversations.replies returns oldest-first (correct order)
   const threadContext: string[] = []
   if (event.thread_ts) {
     try {
       const threadResult = await client.conversations.replies({
         channel: channelId,
         ts: event.thread_ts,
-        limit: 10,
+        limit: 20,  // grab more thread history for better context
       })
 
       if (threadResult.messages) {
         for (const msg of threadResult.messages) {
-          if (msg.text && msg.ts !== event.ts) {
-            const userName = msg.user ? await getUserName(client, msg.user) : 'Unknown'
-            threadContext.push(`${userName}: ${msg.text}`)
+          // Skip the current message itself
+          if (msg.ts === event.ts) continue
+          // Truncate individual messages to avoid token bloat
+          const text = (msg.text || '').slice(0, 1000)
+          if (!text) continue
+
+          // Bot messages have bot_id instead of user — attribute to "Bloom"
+          if (msg.bot_id) {
+            threadContext.push(`Bloom: ${text}`)
+          } else if (msg.user) {
+            const userName = await getUserName(client, msg.user)
+            threadContext.push(`${userName}: ${text}`)
           }
         }
       }
@@ -199,18 +209,27 @@ async function handleMention(event: any) {
   }
 
   // Get recent channel history for additional context
+  // conversations.history returns newest-first — reverse to chronological order
   const channelHistory: string[] = []
   try {
     const historyResult = await client.conversations.history({
       channel: channelId,
-      limit: 20,
+      limit: 15,
     })
 
     if (historyResult.messages) {
-      for (const msg of historyResult.messages) {
-        if (msg.text && msg.type === 'message' && !msg.subtype && msg.ts !== event.ts) {
-          const userName = msg.user ? await getUserName(client, msg.user) : 'Unknown'
-          channelHistory.push(`${userName}: ${msg.text}`)
+      // Reverse so oldest messages come first (chronological context)
+      const msgs = [...historyResult.messages].reverse()
+      for (const msg of msgs) {
+        if (!msg.text || msg.ts === event.ts) continue
+        if (msg.subtype) continue  // skip joins, leaves, etc.
+        // Truncate individual messages
+        const text = msg.text.slice(0, 500)
+        if (msg.bot_id) {
+          channelHistory.push(`Bloom: ${text}`)
+        } else if (msg.user) {
+          const userName = await getUserName(client, msg.user)
+          channelHistory.push(`${userName}: ${text}`)
         }
       }
     }
@@ -294,12 +313,36 @@ async function handleDirectMessage(event: any) {
     // We have a brand context, process the DM like a mention
     console.log('[Slack Bot] Processing DM with brand:', brand.name)
 
+    // Fetch recent DM history so the bot has conversation memory
+    const dmHistory: string[] = []
+    try {
+      const dmHistoryResult = await client.conversations.history({
+        channel: channelId,
+        limit: 15,
+      })
+      if (dmHistoryResult.messages) {
+        const msgs = [...(dmHistoryResult.messages || [])].reverse()
+        for (const msg of msgs) {
+          if (!msg.text || msg.ts === event.ts) continue
+          const text = msg.text.slice(0, 500)
+          if (msg.bot_id) {
+            dmHistory.push(`Bloom: ${text}`)
+          } else if (msg.user) {
+            const userName = await getUserName(client, msg.user)
+            dmHistory.push(`${userName}: ${text}`)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Slack Bot] Failed to fetch DM history:', err)
+    }
+
     try {
       const result = await runSlackAgent({
         brandId: brand.id,
         question: text,
         threadContext: [],
-        channelHistory: [],
+        channelHistory: dmHistory,
       })
 
       await client.chat.postMessage({

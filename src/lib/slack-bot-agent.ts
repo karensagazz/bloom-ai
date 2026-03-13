@@ -3,19 +3,51 @@ import { prisma } from './db'
 import * as fs from 'fs'
 import * as path from 'path'
 
-// Load tracker reading skill card from filesystem at startup
-// This is injected into every prompt so the bot always follows it
-function loadTrackerSkillCard(): string {
-  try {
-    const skillPath = path.join(process.cwd(), 'src', 'lib', 'skills', 'skill_tracker_reading.md')
-    return fs.readFileSync(skillPath, 'utf-8')
-  } catch {
-    console.warn('[Slack Agent] Could not load tracker skill card from filesystem')
-    return ''
+// Load all skill cards from filesystem at startup and inject into every prompt
+// This ensures the bot always has access to all skills without needing to call a tool
+function loadSkillCards(): Record<string, string> {
+  const skillFiles = {
+    tracker_reading: 'skill_tracker_reading.md',
+    performance_benchmarks: 'skill_performance_benchmarks.md',
+    campaign_strategy: 'skill_campaign_strategy.md',
+    legal_compliance: 'skill_legal_compliance.md',
   }
+
+  const loaded: Record<string, string> = {}
+  for (const [key, filename] of Object.entries(skillFiles)) {
+    try {
+      const skillPath = path.join(process.cwd(), 'src', 'lib', 'skills', filename)
+      loaded[key] = fs.readFileSync(skillPath, 'utf-8')
+      console.log(`[Slack Agent] Loaded skill card: ${key}`)
+    } catch {
+      console.warn(`[Slack Agent] Could not load skill card: ${filename}`)
+      loaded[key] = ''
+    }
+  }
+  return loaded
 }
 
-const TRACKER_SKILL_CARD = loadTrackerSkillCard()
+const ALL_SKILL_CARDS = loadSkillCards()
+
+// Build injected skills block for the system prompt (all skills, always active)
+function buildSkillsBlock(): string {
+  const sections: string[] = []
+  const labels: Record<string, string> = {
+    tracker_reading: 'TRACKER READING — Follow when any campaign/creator data is involved',
+    performance_benchmarks: 'PERFORMANCE BENCHMARKS — Use when evaluating or ranking creators/campaigns',
+    campaign_strategy: 'CAMPAIGN STRATEGY — Use when advising on planning, briefs, or recommendations',
+    legal_compliance: 'LEGAL & COMPLIANCE — Use when discussing contracts, SOWs, rates, or FTC rules',
+  }
+
+  for (const [key, content] of Object.entries(ALL_SKILL_CARDS)) {
+    if (content) {
+      sections.push(`### SKILL: ${labels[key] || key}\n\n${content}`)
+    }
+  }
+
+  if (sections.length === 0) return ''
+  return `\n\n---\n## MANDATORY SKILL LIBRARY\n\nAll skills below are ALWAYS active. Apply the relevant skill(s) to every answer.\n\n${sections.join('\n\n---\n\n')}`
+}
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -345,8 +377,8 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
 
       if (query) {
         where.OR = [
-          { name: { contains: query } },
-          { email: { contains: query } },
+          { name: { contains: query, mode: 'insensitive' } },
+          { email: { contains: query, mode: 'insensitive' } },
         ]
       }
 
@@ -364,6 +396,12 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           platform: i.platform,
           totalCampaigns: i.totalCampaigns,
           estimatedRate: i.estimatedRate,
+          cohort: i.cohort,
+          deliverables: i.deliverables,
+          term: i.term,
+          paidUsageTerms: i.paidUsageTerms,
+          engagementRate: i.engagementRate,
+          followerCount: i.followerCount,
         })),
       }
     }
@@ -374,8 +412,8 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
       const where: any = { brandId }
 
       if (year) where.year = year
-      if (status) where.status = { contains: status }
-      if (influencerName) where.influencerName = { contains: influencerName }
+      if (status) where.status = { contains: status, mode: 'insensitive' }
+      if (influencerName) where.influencerName = { contains: influencerName, mode: 'insensitive' }
 
       const campaigns = await prisma.campaignRecord.findMany({
         where,
@@ -418,6 +456,7 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
 
       return {
         count: contracts.length,
+        note: 'When structured fields are blank, check rawData for original spreadsheet values.',
         contracts: contracts.map(c => ({
           influencerName: c.influencerName,
           campaignName: c.campaignName,
@@ -428,6 +467,7 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           totalValue: c.totalValue,
           status: c.status,
           deliverables: c.deliverables,
+          rawData: c.rawData ? (() => { try { return JSON.parse(c.rawData!) } catch { return c.rawData } })() : null,
         })),
       }
     }
@@ -590,7 +630,7 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           title: doc.title,
           folder: doc.folder?.name || 'Unknown',
           documentType: doc.documentType,
-          excerpt: doc.content?.slice(0, 500) + (doc.content && doc.content.length > 500 ? '...' : ''),
+          excerpt: doc.content?.slice(0, 3000) + (doc.content && doc.content.length > 3000 ? '...' : ''),
           tags: doc.tags,
           isIndustryKnowledge: doc.folder?.name === 'Industry Knowledge',
         })),
@@ -738,11 +778,8 @@ export async function runSlackAgent(options: {
   )
   console.log('[Slack Agent] Brand fetched:', brand?.name)
 
-  const trackerGuidance = TRACKER_SKILL_CARD
-    ? `\n\n---\n## MANDATORY TRACKER READING RULES\n\nThe following rules MUST be followed for every answer involving campaign data. These override any defaults:\n\n${TRACKER_SKILL_CARD}`
-    : ''
-
-  const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}${trackerGuidance}`
+  const skillsBlock = buildSkillsBlock()
+  const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}${skillsBlock}`
 
   console.log('[Slack Agent] Calling Claude API (initial)...')
   let response = await withTimeout(
