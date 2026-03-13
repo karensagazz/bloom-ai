@@ -522,7 +522,7 @@ export async function buildInfluencerRoster(
     if (!tab.rawData || !tab.headers) continue
 
     const headers = JSON.parse(tab.headers) as string[]
-    const rows = JSON.parse(tab.rawData) as Record<string, string>[]
+    const rows = JSON.parse(tab.rawData) as Record<string, string | number>[]
 
     // Find column indices
     const nameIdx = findColumnIndex(headers, COLUMN_PATTERNS.name)
