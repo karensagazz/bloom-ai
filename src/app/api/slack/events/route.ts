@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { WebClient } from '@slack/web-api'
+import { waitUntil } from '@vercel/functions'
 import { prisma } from '@/lib/db'
 import { runSlackAgent } from '@/lib/slack-bot-agent'
 
@@ -94,9 +95,11 @@ export async function POST(request: NextRequest) {
       // Handle app mentions (@Bloom)
       if (event.type === 'app_mention') {
         console.log('[Slack Events] App mention received from', event.user, 'in channel', event.channel)
-        // Process in background to avoid Slack timeout
-        handleMention(event).catch((err) =>
-          console.error('[Slack Events] Error handling mention:', err)
+        // Use waitUntil so Vercel keeps the function alive until processing completes
+        waitUntil(
+          handleMention(event).catch((err) =>
+            console.error('[Slack Events] Error handling mention:', err)
+          )
         )
         return NextResponse.json({ ok: true })
       }
@@ -108,8 +111,11 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ ok: true })
         }
 
-        handleDirectMessage(event).catch((err) =>
-          console.error('Error handling DM:', err)
+        // Use waitUntil so Vercel keeps the function alive until processing completes
+        waitUntil(
+          handleDirectMessage(event).catch((err) =>
+            console.error('Error handling DM:', err)
+          )
         )
         return NextResponse.json({ ok: true })
       }

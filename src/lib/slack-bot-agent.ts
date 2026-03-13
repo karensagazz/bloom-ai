@@ -686,7 +686,7 @@ export async function runSlackAgent(options: {
   console.log('[Slack Agent] Calling Claude API (initial)...')
   let response = await withTimeout(
     anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       system: systemPrompt,
       tools,
@@ -751,7 +751,7 @@ export async function runSlackAgent(options: {
     console.log(`[Slack Agent] Calling Claude API (iteration ${iterationCount})...`)
     response = await withTimeout(
       anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2048,
         system: systemPrompt,
         tools,
