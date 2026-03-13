@@ -76,7 +76,16 @@ export async function PUT(
 ) {
   try {
     const body = await request.json()
-    const { name, website, slackChannelId, slackChannelName, sheetName } = body
+    const { name, website, slackChannelId, slackChannelName, sheetName, isDefault } = body
+
+    // If setting this brand as default, unset all others first
+    if (isDefault === true) {
+      await prisma.brand.updateMany({
+        where: { isDefault: true, id: { not: params.id } },
+        data: { isDefault: false },
+      })
+      console.log('[Brands] Setting new default brand:', params.id)
+    }
 
     const brand = await prisma.brand.update({
       where: { id: params.id },
@@ -86,6 +95,7 @@ export async function PUT(
         ...(slackChannelId !== undefined && { slackChannelId }),
         ...(slackChannelName !== undefined && { slackChannelName }),
         ...(sheetName && { sheetName }),
+        ...(isDefault !== undefined && { isDefault }),
       },
     })
 

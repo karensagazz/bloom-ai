@@ -64,6 +64,10 @@ export async function POST(request: Request) {
       }
     }
 
+    // Check if this is the first brand - if so, make it default automatically
+    const brandCount = await prisma.brand.count()
+    const isFirstBrand = brandCount === 0
+
     // Create the brand
     const brand = await prisma.brand.create({
       data: {
@@ -74,9 +78,14 @@ export async function POST(request: Request) {
         website: website || null,
         slackChannelId: slackChannelId || null,
         slackChannelName: slackChannelName || null,
+        isDefault: isFirstBrand, // First brand is auto-default for Slack
         syncStatus: spreadsheetId ? 'pending' : 'synced', // No tracker = already "synced"
       },
     })
+
+    if (isFirstBrand) {
+      console.log('[Brands] First brand created, auto-set as default:', brand.name)
+    }
 
     return NextResponse.json(brand, { status: 201 })
   } catch (error) {

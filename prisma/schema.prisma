@@ -38,6 +38,9 @@ model Brand {
   slackChannelId    String?
   slackChannelName  String?
 
+  // Default brand for Slack (when no channel-specific mapping exists)
+  isDefault         Boolean  @default(false)
+
   // Website intelligence
   website           String?
   websiteSummary    String?           // AI-generated summary of brand

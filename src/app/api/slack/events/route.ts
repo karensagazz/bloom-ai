@@ -16,6 +16,44 @@ async function getSlackClient(): Promise<WebClient> {
   return new WebClient(settings.slackBotToken)
 }
 
+// Smart brand resolution with fallback logic
+// Priority: 1) Channel-specific mapping, 2) Default brand, 3) Only brand in system
+async function getBrandForChannel(channelId: string) {
+  // Priority 1: Check for channel-specific brand mapping (existing behavior)
+  const channelBrand = await prisma.brand.findFirst({
+    where: { slackChannelId: channelId },
+  })
+
+  if (channelBrand) {
+    console.log('[Slack Bot] Found channel-mapped brand:', channelBrand.name)
+    return channelBrand
+  }
+
+  // Priority 2: Check for default brand
+  const defaultBrand = await prisma.brand.findFirst({
+    where: { isDefault: true },
+  })
+
+  if (defaultBrand) {
+    console.log('[Slack Bot] Using default brand:', defaultBrand.name)
+    return defaultBrand
+  }
+
+  // Priority 3: If only one brand exists, use it automatically
+  const allBrands = await prisma.brand.findMany({
+    take: 2, // Only need to know if 0, 1, or 2+ brands
+  })
+
+  if (allBrands.length === 1) {
+    console.log('[Slack Bot] Auto-selecting only brand:', allBrands[0].name)
+    return allBrands[0]
+  }
+
+  // No brand could be determined
+  console.log('[Slack Bot] No brand found. Total brands:', allBrands.length)
+  return null
+}
+
 // Handle Slack events
 export async function POST(request: NextRequest) {
   try {
@@ -88,24 +126,26 @@ async function handleMention(event: any) {
 
   console.log('[Slack Bot] Looking for brand with channelId:', channelId)
 
-  // Find brand associated with this channel
-  const brand = await prisma.brand.findFirst({
-    where: { slackChannelId: channelId },
-  })
-
-  console.log('[Slack Bot] Found brand:', brand?.name || 'none')
+  // Smart brand resolution with fallback
+  const brand = await getBrandForChannel(channelId)
 
   if (!brand) {
-    // No brand connected to this channel
+    // No brand could be determined
+    const brandCount = await prisma.brand.count()
+
+    const message = brandCount === 0
+      ? "Hey! I don't have any brands set up yet. Add a brand in the Bloom dashboard first, and I'll be ready to help!"
+      : "Hey! I found multiple brands but none is set as default. Either:\n- Set a default brand in the Bloom dashboard\n- Or connect this channel to a specific brand"
+
     await client.chat.postMessage({
       channel: channelId,
-      text: "Hey! I don't see this channel connected to a brand yet. You can set that up in the Bloom dashboard under the brand's Slack settings.",
+      text: message,
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: "Hey! I don't see this channel connected to a brand yet. You can set that up in the Bloom dashboard under the brand's Slack settings.",
+            text: message,
           },
         },
       ],
@@ -113,6 +153,8 @@ async function handleMention(event: any) {
     })
     return
   }
+
+  console.log('[Slack Bot] Using brand:', brand.name)
 
   // Get thread context if this is a thread reply
   const threadContext: string[] = []
@@ -226,16 +268,51 @@ async function handleDirectMessage(event: any) {
   const text = event.text
   const channelId = event.channel
 
-  // For DMs, provide a helpful message about using the bot in brand channels
+  // Try to find a usable brand for DMs using smart resolution
+  const brand = await getBrandForChannel(channelId)
+
+  if (brand) {
+    // We have a brand context, process the DM like a mention
+    console.log('[Slack Bot] Processing DM with brand:', brand.name)
+
+    try {
+      const result = await runSlackAgent({
+        brandId: brand.id,
+        question: text,
+        threadContext: [],
+        channelHistory: [],
+      })
+
+      await client.chat.postMessage({
+        channel: channelId,
+        text: result.answer,
+        blocks: [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: result.answer },
+          },
+        ],
+      })
+    } catch (error) {
+      console.error('[Slack Bot] DM processing error:', error)
+      await client.chat.postMessage({
+        channel: channelId,
+        text: "Sorry, I ran into an issue. Try again or @mention me in a channel.",
+      })
+    }
+    return
+  }
+
+  // No brand context available - give guidance
   await client.chat.postMessage({
     channel: channelId,
-    text: "Hey! I work best when you @mention me in a brand's Slack channel - that way I know which brand you're asking about.\n\nTo use me:\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\nExample: `@Bloom who are our top performing creators this quarter?`",
+    text: "Hey! I need a brand context to help you. Set up a brand in the Bloom dashboard, and I'll be ready to answer your questions!",
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: "Hey! I work best when you @mention me in a brand's Slack channel - that way I know which brand you're asking about.\n\n*To use me:*\n1. Go to the Bloom dashboard\n2. Connect a brand to a Slack channel\n3. @mention me in that channel with your question\n\n_Example:_ `@Bloom who are our top performing creators this quarter?`",
+          text: "Hey! I need a brand context to help you.\n\n*Quick setup:*\n1. Go to the Bloom dashboard\n2. Create a brand (it will be set as default automatically)\n3. Then message me here or @mention me in any channel!",
         },
       },
     ],
