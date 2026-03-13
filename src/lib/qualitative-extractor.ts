@@ -65,7 +65,7 @@ export async function extractCampaignInsights(
   brandName: string,
   tabName: string,
   headers: string[],
-  rows: Record<string, string>[],
+  rows: Record<string, string | number>[],
   year?: number
 ): Promise<ExtractedInsight[]> {
   // Guard: Skip tabs with no data

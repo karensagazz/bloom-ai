@@ -14,7 +14,7 @@ export interface ExtractedCampaignRecord {
   dealValue?: string
   status?: string
   quarter?: string
-  rawData?: Record<string, string>
+  rawData?: Record<string, string | number>
 }
 
 // Extracted SOW (Statement of Work) record type
@@ -32,7 +32,7 @@ export interface ExtractedSOWRecord {
   startDate?: string
   endDate?: string
   status?: string
-  rawData?: Record<string, string>
+  rawData?: Record<string, string | number>
 }
 
 // Parse deal value string to cents (for aggregation)
@@ -91,7 +91,7 @@ async function extractCampaignBatch(
   brandName: string,
   tabName: string,
   headers: string[],
-  batchRows: Record<string, string>[],
+  batchRows: Record<string, string | number>[],
   batchIndex: number,
   totalRows: number,
   year?: number
@@ -274,7 +274,7 @@ async function extractSOWBatch(
   brandName: string,
   tabName: string,
   headers: string[],
-  batchRows: Record<string, string>[],
+  batchRows: Record<string, string | number>[],
   batchIndex: number,
   totalRows: number,
   year?: number,
