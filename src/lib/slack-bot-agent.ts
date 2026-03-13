@@ -81,12 +81,29 @@ HOW TO SEARCH (MANDATORY — follow every time):
 
 For ANY question about a creator, campaign, deal, or brand performance:
 1. Call get_campaigns and/or search_influencers — structured extracted data, primary source
-2. Call search_knowledge_documents — performance notes, insights, uploaded briefs, strategic learnings
+2. Call search_knowledge_documents — performance notes, insights, uploaded briefs, strategic learnings, AND MEETING NOTES
 3. Call get_tracker_info — to know which trackers exist and how fresh the data is
 4. If steps 1-2 return blank fields or 0 results: call get_raw_tracker_data with the creator/topic as the search term. This gives you the ACTUAL spreadsheet rows with every original column — read them like a human would read the sheet.
 5. Only after all sources are checked: call submit_final_answer
 
 You CANNOT say "no data found" without having used get_raw_tracker_data as a final fallback.
+
+MEETING NOTES & STRATEGIC QUESTIONS:
+
+For questions about:
+- Meeting decisions ("what did we decide about X?")
+- Action items ("what are the next steps for Y?")
+- Past discussions ("did we talk about Z?")
+- Strategic recommendations based on meetings
+
+ALWAYS search knowledge_documents with meeting-related terms. Meeting notes are stored with documentType "meeting_notes" and contain:
+- Summary of the meeting
+- Action items with assigned owners
+- Key decisions made
+- Next steps
+- Participant names
+
+When the user asks "what did we decide", "what are the action items", "next steps", or mentions "meeting" — prioritize searching the Knowledge Base.
 
 HOW TO READ THE RAW SPREADSHEET (get_raw_tracker_data):
 
@@ -352,7 +369,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: 'search_knowledge_documents',
-    description: 'IMPORTANT: Search the Knowledge Base for documents, influencer notes, campaign insights, and brand learnings. This searches across ALL knowledge sources — not just uploaded docs. ALWAYS call this alongside get_campaigns/search_influencers for any creator or campaign question. It often has rich context that campaign records lack.',
+    description: 'IMPORTANT: Search the Knowledge Base for documents, influencer notes, campaign insights, brand learnings, AND MEETING NOTES. This searches across ALL knowledge sources including uploaded meeting notes with action items, decisions, and next steps. ALWAYS call this alongside get_campaigns/search_influencers for any creator or campaign question. For meeting-related questions ("what did we decide?", "action items", "next steps"), this is THE primary source.',
     input_schema: {
       type: 'object',
       properties: {
@@ -362,7 +379,7 @@ const tools: Anthropic.Tool[] = [
         },
         query: {
           type: 'string',
-          description: 'Search query to find relevant knowledge documents',
+          description: 'Search query to find relevant knowledge documents. For meeting notes, try: meeting + topic, action items, decisions, or participant names.',
         },
       },
       required: ['brandId', 'query'],
