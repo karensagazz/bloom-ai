@@ -347,6 +347,7 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
 
       return {
         count: campaigns.length,
+        note: 'When structured fields (platform, dealValue, status, etc.) are blank, check rawData — it contains the original spreadsheet row and may have the actual values under different column names.',
         campaigns: campaigns.map(c => ({
           influencerName: c.influencerName,
           campaignName: c.campaignName,
@@ -356,6 +357,8 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           status: c.status,
           year: c.year,
           quarter: c.quarter,
+          // Include raw spreadsheet row so bot can read actual values even when structured fields are blank
+          rawData: c.rawData ? (() => { try { return JSON.parse(c.rawData!) } catch { return c.rawData } })() : null,
         })),
       }
     }

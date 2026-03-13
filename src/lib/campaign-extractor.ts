@@ -99,9 +99,9 @@ export async function extractCampaignRecords(
     return []
   }
 
-  // Sample rows to control token usage (max 50 rows)
-  const sampleRows = rows.slice(0, 50)
-  const hasMore = rows.length > 50
+  // Sample rows to control token usage (max 100 rows)
+  const sampleRows = rows.slice(0, 100)
+  const hasMore = rows.length > 100
 
   const systemPrompt = `You are a data extraction assistant that analyzes influencer marketing campaign tracker spreadsheets.
 Your job is to identify which columns contain relevant campaign data and extract structured records.
@@ -119,7 +119,7 @@ Data rows (${sampleRows.length} of ${rows.length} total${hasMore ? ' - showing s
 ${JSON.stringify(sampleRows, null, 2)}
 
 COLUMN MAPPING RULES:
-- SKIP these columns if present: "Owner" (campaign manager), "Campaign", "Content"
+- SKIP these columns if present: "Owner" (campaign manager/internal field only)
 - For platform: Look for "Campaign Channel" column FIRST
   - This contains platform names: Instagram, TikTok, YouTube, Twitter/X
   - If "Campaign Channel" not found, try fallback names: "Platform", "Channel", "Social"
@@ -146,7 +146,7 @@ IMPORTANT RULES:
 1. If this tab doesn't contain campaign/influencer data (e.g., it's a budget summary, notes, or template), return an empty array []
 2. Skip rows that appear to be totals, headers, or empty
 3. If a column doesn't exist, omit that field (don't guess)
-4. SKIP columns named "Owner", "Campaign", or "Content" - these are metadata, not campaign data
+4. SKIP columns named "Owner" - that's an internal campaign manager field, not campaign data. DO NOT skip "Campaign" or "Content" columns - they often contain campaign name and content type data
 5. The "Campaign Channel" column is the PRIMARY source for platform information
 6. Status mapping: "active" → "Active", "not active" → "Completed", preserve all other status values
 7. When extracting deal values, consider the creator name and deliverable scope in the same row for accuracy
@@ -236,9 +236,9 @@ export async function extractSOWRecords(
     return []
   }
 
-  // Sample rows to control token usage (max 50 rows)
-  const sampleRows = rows.slice(0, 50)
-  const hasMore = rows.length > 50
+  // Sample rows to control token usage (max 100 rows)
+  const sampleRows = rows.slice(0, 100)
+  const hasMore = rows.length > 100
 
   const systemPrompt = `You are a data extraction assistant specializing in influencer marketing contracts and SOW (Statement of Work) documents.
 Your job is to identify contract/deal information and extract structured records.

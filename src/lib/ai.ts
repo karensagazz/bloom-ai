@@ -30,7 +30,7 @@ export async function getCheapStructuredCompletion(
   try {
     const response = await withTimeout(
       anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: maxTokens,
         system: systemPrompt,
         messages: [
@@ -100,7 +100,7 @@ export async function getChatCompletion(messages: Array<{ role: string; content:
 
     const response = await withTimeout(
       anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 1000,
         system: systemMessage?.content || 'You are a helpful assistant.',
         messages: anthropicMessages as any,
