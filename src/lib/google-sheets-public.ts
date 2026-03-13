@@ -257,7 +257,7 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
 
     // CRITICAL FIX: Detect if row 1 is a title row vs actual headers
     // Many trackers have: Row 1 = Title, Row 2 = Headers, Row 3+ = Data
-    function isLikelyTitleRow(row: string[]): boolean {
+    const isLikelyTitleRow = (row: string[]): boolean => {
       // Title rows have very few non-empty cells (usually 1-3)
       const nonEmptyCells = row.filter(cell => cell?.trim()).length
 
@@ -299,7 +299,7 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
     // Helper function to parse cell values with type coercion
     // Numbers like "5000", "3.5", "$1,250" → stored as numbers
     // Everything else → stored as strings
-    function parseCellValue(value: string): string | number {
+    const parseCellValue = (value: string): string | number => {
       if (!value || !value.trim()) return ''
 
       const trimmed = value.trim()
