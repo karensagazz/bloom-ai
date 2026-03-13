@@ -426,8 +426,8 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
                 const raw = typeof c.rawData === 'string' ? JSON.parse(c.rawData) : c.rawData
                 const allValues = Object.values(raw as Record<string, any>).map(v => String(v || '').toLowerCase())
                 const fullText = allValues.join(' ')
-                return searchTerms.every(term => fullText.includes(term)) ||
-                  searchTerms.some(term => fullText.includes(term) && term.length >= 3)
+                return searchTerms.every((term: string) => fullText.includes(term)) ||
+                  searchTerms.some((term: string) => fullText.includes(term) && term.length >= 3)
               } catch { return false }
             }
             return false
@@ -505,9 +505,9 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           // Check structured influencerName with partial match
           if (c.influencerName) {
             const name = c.influencerName.toLowerCase()
-            if (searchTerms.every(term => name.includes(term))) return true
+            if (searchTerms.every((term: string) => name.includes(term))) return true
             // Also match if any single search term is a close match (e.g. "Helen" matches "Helen L.")
-            if (searchTerms.some(term => name.includes(term) && term.length >= 3)) return true
+            if (searchTerms.some((term: string) => name.includes(term) && term.length >= 3)) return true
           }
           // Check rawData for the name in any field value
           if (c.rawData) {
@@ -515,8 +515,8 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
               const raw = typeof c.rawData === 'string' ? JSON.parse(c.rawData) : c.rawData
               const allValues = Object.values(raw as Record<string, any>).map(v => String(v || '').toLowerCase())
               const fullText = allValues.join(' ')
-              if (searchTerms.every(term => fullText.includes(term))) return true
-              if (searchTerms.some(term => fullText.includes(term) && term.length >= 3)) return true
+              if (searchTerms.every((term: string) => fullText.includes(term))) return true
+              if (searchTerms.some((term: string) => fullText.includes(term) && term.length >= 3)) return true
             } catch { /* ignore parse errors */ }
           }
           return false
