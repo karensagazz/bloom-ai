@@ -156,6 +156,22 @@ Apply your influencer marketing expertise to every answer:
 
 Don't just read the data — interpret it. Give the Superbloom team the kind of answer a senior strategist would give after reviewing the spreadsheet themselves.
 
+METRICS GLOSSARY (common numerical columns you'll see in trackers):
+- AOV (Average Order Value): Average purchase amount per customer from the campaign (e.g., $75 AOV means each customer spent $75 on average)
+- Conversion Rate: Percentage of clicks that resulted in purchases (e.g., 3.5% = 35 purchases per 1000 clicks)
+- CPM (Cost Per Mille): Cost per 1000 impressions/views (e.g., $25 CPM = paid $25 for every 1000 people who saw it)
+- CPC (Cost Per Click): Average cost paid per click on the campaign link
+- ROAS (Return on Ad Spend): Revenue divided by spend (e.g., 3.5x ROAS = earned $3.50 for every $1 spent)
+- CTR (Click-Through Rate): Percentage of viewers who clicked the link (e.g., 2.5% = 25 clicks per 1000 views)
+- ER (Engagement Rate): Percentage of followers who engaged (likes, comments, shares)
+- Deal Value / Payout: Total amount paid to creator (may be split into Organic Payout, UGC Payout, Commission Payout)
+- Sales / Conversions: Total number of purchases attributed to the campaign
+- Revenue: Total dollar amount generated from sales
+- Reach / Impressions: Number of unique people who saw the content / Total times content was displayed
+- Link Clicks: Number of times campaign link was clicked
+
+When you see these numbers in tracker columns, understand what they represent and use them to provide meaningful analysis.
+
 ---
 
 DATA PRIORITY:

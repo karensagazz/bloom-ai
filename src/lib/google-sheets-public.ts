@@ -296,12 +296,36 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
       headers.length > 10 ? `... and ${headers.length - 10} more` : ''
     )
 
+    // Helper function to parse cell values with type coercion
+    // Numbers like "5000", "3.5", "$1,250" → stored as numbers
+    // Everything else → stored as strings
+    function parseCellValue(value: string): string | number {
+      if (!value || !value.trim()) return ''
+
+      const trimmed = value.trim()
+
+      // Remove common currency/formatting characters for number detection
+      const cleaned = trimmed.replace(/[$,€£¥%]/g, '')
+
+      // Check if it's a valid number after cleanup
+      if (cleaned && !isNaN(Number(cleaned)) && cleaned !== '') {
+        const num = Number(cleaned)
+        // Only treat as number if it's finite and looks intentional
+        if (isFinite(num)) {
+          return num
+        }
+      }
+
+      // Not a number, return as string
+      return trimmed
+    }
+
     // Convert remaining rows to objects (skip title + header rows)
     const dataRows = rows.slice(headerRowIndex + 1).map((row, index) => {
-      const obj: Record<string, string> = {}
+      const obj: Record<string, string | number> = {}
       // Use the normalized headers (never empty strings)
       headers.forEach((header, i) => {
-        obj[header] = row[i] || ''
+        obj[header] = parseCellValue(row[i] || '')
       })
       return {
         rowIndex: index,
