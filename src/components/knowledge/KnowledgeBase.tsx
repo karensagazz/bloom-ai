@@ -233,7 +233,6 @@ export default function KnowledgeBase({ brandId }: KnowledgeBaseProps) {
           }}
         />
       </div>
-      </div>
     </div>
   )
 }
