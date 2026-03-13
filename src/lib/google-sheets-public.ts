@@ -238,7 +238,10 @@ function parseCSV(text: string): string[][] {
 }
 
 // Fetch and parse a public Google Sheet
-export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0') {
+export async function fetchPublicSheet(
+  spreadsheetId: string,
+  gid: string = '0'
+): Promise<{ headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string | number> }> }> {
   const csvUrl = getPublicCsvUrl(spreadsheetId, gid)
 
   try {
