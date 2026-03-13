@@ -642,8 +642,11 @@ export async function runSlackAgent(options: {
 }> {
   const { brandId, question, threadContext = [], channelHistory = [] } = options
 
-  // Build context from thread and channel
-  const contextMessages: string[] = []
+  try {
+    console.log('[Slack Agent] Starting for brand:', brandId, 'Question:', question.slice(0, 100))
+
+    // Build context from thread and channel
+    const contextMessages: string[] = []
 
   if (channelHistory.length > 0) {
     contextMessages.push('=== Recent Channel History ===')
@@ -667,13 +670,20 @@ export async function runSlackAgent(options: {
   ]
 
   // Get brand info for context
-  const brand = await prisma.brand.findUnique({
-    where: { id: brandId },
-    select: { name: true },
-  })
+  console.log('[Slack Agent] Fetching brand from database...')
+  const brand = await withTimeout(
+    prisma.brand.findUnique({
+      where: { id: brandId },
+      select: { name: true },
+    }),
+    5000,
+    'Database query for brand info'
+  )
+  console.log('[Slack Agent] Brand fetched:', brand?.name)
 
   const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}`
 
+  console.log('[Slack Agent] Calling Claude API (initial)...')
   let response = await withTimeout(
     anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -685,6 +695,7 @@ export async function runSlackAgent(options: {
     SLACK_AI_TIMEOUT_MS,
     'Slack bot initial response'
   )
+  console.log('[Slack Agent] Initial API call completed. Stop reason:', response.stop_reason)
 
   // Agent loop - process tool calls until we get a final response
   let iterationCount = 0
@@ -693,6 +704,7 @@ export async function runSlackAgent(options: {
 
   while (response.stop_reason === 'tool_use' && iterationCount < maxIterations) {
     iterationCount++
+    console.log(`[Slack Agent] Starting iteration ${iterationCount}/${maxIterations}`)
 
     // Get ALL tool_use blocks from the response (Claude may return multiple)
     const toolUseBlocks = response.content.filter(
@@ -701,11 +713,15 @@ export async function runSlackAgent(options: {
 
     if (toolUseBlocks.length === 0) break
 
+    console.log(`[Slack Agent] Found ${toolUseBlocks.length} tool(s) to execute`)
+
     // Execute ALL tools and collect results
     const toolResults: Anthropic.ToolResultBlockParam[] = []
 
     for (const toolUseBlock of toolUseBlocks) {
+      console.log(`[Slack Agent] Executing tool: ${toolUseBlock.name}`)
       const toolResult = await executeToolCall(toolUseBlock.name, toolUseBlock.input)
+      console.log(`[Slack Agent] Tool result size: ${JSON.stringify(toolResult).length} chars`)
 
       // Store tracker info for confidence calculation
       if (toolUseBlock.name === 'get_tracker_info') {
@@ -732,6 +748,7 @@ export async function runSlackAgent(options: {
     })
 
     // Get next response
+    console.log(`[Slack Agent] Calling Claude API (iteration ${iterationCount})...`)
     response = await withTimeout(
       anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
@@ -786,9 +803,21 @@ export async function runSlackAgent(options: {
     finalAnswer = answer + '\n' + guidanceLines.join('\n')
   }
 
-  return {
-    answer: finalAnswer,
-    confidence,
-    source,
+    console.log('[Slack Agent] Completed. Confidence:', confidence, 'Source:', source)
+
+    return {
+      answer: finalAnswer,
+      confidence,
+      source,
+    }
+  } catch (error) {
+    console.error('[Slack Agent] FATAL ERROR:', error)
+    console.error('[Slack Agent] Stack:', error instanceof Error ? error.stack : 'No stack trace')
+
+    return {
+      answer: "Sorry, I ran into a technical issue processing your question. Please try again in a moment, or contact the team if this persists.",
+      confidence: 0,
+      source: 'error'
+    }
   }
 }

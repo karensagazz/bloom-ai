@@ -3,6 +3,19 @@ import { WebClient } from '@slack/web-api'
 import { prisma } from '@/lib/db'
 import { runSlackAgent } from '@/lib/slack-bot-agent'
 
+// Force dynamic - API routes should never be prerendered
+export const dynamic = 'force-dynamic'
+
+// GET handler - for browser/health check access
+export async function GET() {
+  return NextResponse.json({
+    status: 'ok',
+    message: 'Bloom Slack Events Webhook',
+    info: 'This endpoint receives POST requests from Slack. Visit /api/slack/health for connection status.',
+    timestamp: new Date().toISOString(),
+  })
+}
+
 // Get Slack client
 async function getSlackClient(): Promise<WebClient> {
   const settings = await prisma.settings.findUnique({

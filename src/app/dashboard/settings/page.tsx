@@ -23,6 +23,8 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [skillCardStatus, setSkillCardStatus] = useState<any>(null)
+  const [healthChecking, setHealthChecking] = useState(false)
+  const [healthStatus, setHealthStatus] = useState<any>(null)
 
   // Load existing settings
   useEffect(() => {
@@ -172,6 +174,22 @@ export default function SettingsPage() {
     loadSkillCardStatus()
   }, [])
 
+  // Check Slack health
+  const handleHealthCheck = async () => {
+    setHealthChecking(true)
+    setHealthStatus(null)
+    try {
+      const res = await fetch('/api/slack/health')
+      const data = await res.json()
+      setHealthStatus(data)
+    } catch (err: any) {
+      console.error('Health check failed:', err)
+      setHealthStatus({ status: 'error', error: err.message })
+    } finally {
+      setHealthChecking(false)
+    }
+  }
+
   // Sync skill cards
   const handleSyncSkillCards = async () => {
     setSyncing(true)
@@ -282,15 +300,39 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-stone-100 space-y-2">
-                <p className="text-sm text-stone-700 font-medium">Required Bot Scopes:</p>
+              <div className="mt-4 pt-4 border-t border-stone-100 space-y-3">
+                <p className="text-sm text-stone-700 font-medium">Required Bot Token Scopes:</p>
                 <div className="flex flex-wrap gap-2">
-                  {['channels:history', 'channels:read', 'chat:write', 'users:read'].map((scope) => (
+                  {[
+                    'app_mentions:read',
+                    'channels:history',
+                    'channels:read',
+                    'chat:write',
+                    'groups:history',
+                    'im:history',
+                    'im:read',
+                    'mpim:history',
+                    'users:read'
+                  ].map((scope) => (
                     <span key={scope} className="text-xs px-2 py-1 bg-stone-100 rounded font-mono">
                       {scope}
                     </span>
                   ))}
                 </div>
+
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-sm text-amber-900 font-medium mb-2">⚠️ Critical: Event Subscriptions Required</p>
+                  <p className="text-xs text-amber-800 mb-2">
+                    In your Slack app settings, go to <strong>Event Subscriptions</strong> and:
+                  </p>
+                  <ol className="text-xs text-amber-800 space-y-1 ml-4 list-decimal">
+                    <li>Enable Events</li>
+                    <li>Set Request URL to: <code className="px-1 py-0.5 bg-amber-100 rounded font-mono">https://your-domain.com/api/slack/events</code></li>
+                    <li>Subscribe to bot events: <code className="px-1 py-0.5 bg-amber-100 rounded font-mono">app_mention</code> and <code className="px-1 py-0.5 bg-amber-100 rounded font-mono">message.im</code></li>
+                    <li>Save changes and reinstall your app to the workspace</li>
+                  </ol>
+                </div>
+
                 <a
                   href="https://api.slack.com/apps"
                   target="_blank"
@@ -300,6 +342,65 @@ export default function SettingsPage() {
                   Create/manage Slack apps
                   <ExternalLink className="h-3 w-3" />
                 </a>
+
+                <div className="mt-4 pt-4 border-t border-stone-100">
+                  <Button
+                    onClick={handleHealthCheck}
+                    disabled={healthChecking}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    {healthChecking ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Checking Connection...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Test Slack Connection
+                      </>
+                    )}
+                  </Button>
+
+                  {healthStatus && (
+                    <div className={`mt-3 p-4 rounded-lg border ${
+                      healthStatus.status === 'healthy'
+                        ? 'bg-green-50 border-green-200'
+                        : 'bg-red-50 border-red-200'
+                    }`}>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-medium ${
+                            healthStatus.status === 'healthy' ? 'text-green-900' : 'text-red-900'
+                          }`}>
+                            {healthStatus.status === 'healthy' ? '✓ Connection Successful' : '✗ Connection Failed'}
+                          </span>
+                        </div>
+
+                        {healthStatus.checks?.slackConnection?.ok && (
+                          <div className="text-xs space-y-1 text-green-800">
+                            <div>Bot User ID: <code className="px-1 py-0.5 bg-green-100 rounded font-mono">{healthStatus.checks.slackConnection.botUserId}</code></div>
+                            <div>Bot Name: <strong>{healthStatus.checks.slackConnection.botName}</strong></div>
+                            <div>Team: <strong>{healthStatus.checks.slackConnection.team}</strong></div>
+                          </div>
+                        )}
+
+                        {healthStatus.checks?.slackConnection?.error && (
+                          <div className="text-xs text-red-800">
+                            <strong>Error:</strong> {healthStatus.checks.slackConnection.error}
+                          </div>
+                        )}
+
+                        {!healthStatus.checks?.anthropicKey?.configured && (
+                          <div className="text-xs text-amber-800 mt-2">
+                            ⚠️ Anthropic API key not configured in environment
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
