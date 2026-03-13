@@ -158,32 +158,40 @@ Don't just read the data — interpret it. Give the Superbloom team the kind of 
 
 METRICS GLOSSARY (common numerical columns you'll see in trackers):
 
+**CRITICAL RULE: Always read metrics directly from tracker columns when they exist. Only calculate as a fallback.**
+
+When you receive tracker data (get_raw_tracker_data or get_campaigns):
+1. First check originalRow/rawData for column names like "Revenue", "AOV", "ROAS", "CPA", "CTR", etc.
+2. If the column exists with a value, USE THAT VALUE DIRECTLY — do not calculate
+3. Only calculate metrics if the tracker doesn't have those columns pre-calculated
+
 **PRIORITY METRICS (always highlight these first):**
-- ROAS (Return on Ad Spend): Revenue ÷ Total Spend. This is THE most important metric. Measures campaign profitability. (e.g., 3.5x ROAS = earned $3.50 for every $1 spent). Good ROAS varies by industry but typically 2.5x+ is solid, 4x+ is excellent.
-- CPA (Cost Per Acquisition): Total Spend ÷ Number of Conversions. How much it costs to acquire one customer. (e.g., $45 CPA = spent $45 to get one purchase). Lower is better. Always compare to customer LTV.
+- ROAS (Return on Ad Spend): Check for "ROAS" column first. If missing, calculate: Revenue ÷ Total Spend. This is THE most important metric. Measures campaign profitability. (e.g., 3.5x ROAS = earned $3.50 for every $1 spent). Good ROAS varies by industry but typically 2.5x+ is solid, 4x+ is excellent.
+- CPA (Cost Per Acquisition): Check for "CPA" column first. If missing, calculate: Total Spend ÷ Number of Conversions. How much it costs to acquire one customer. (e.g., $45 CPA = spent $45 to get one purchase). Lower is better. Always compare to customer LTV.
 
 **REVENUE & COST METRICS:**
-- Revenue: Total dollar amount generated from sales attributed to the campaign (e.g., $15,000 revenue = customers spent $15k total)
+- Revenue: Check for "Revenue" column first — this is usually the most accurate. Total dollar amount generated from sales attributed to the campaign (e.g., $15,000 revenue = customers spent $15k total)
 - Deal Value / Payout: Total amount paid to creator for the campaign (organic payout + UGC payout + commission/affiliate earnings)
-- CPM (Cost Per Mille): Cost per 1000 impressions/views (e.g., $25 CPM = paid $25 for every 1000 people who saw the content)
-- CPC (Cost Per Click): Total Spend ÷ Link Clicks. Average cost per click on the campaign link (e.g., $2.50 CPC = paid $2.50 for each click)
+- CPM (Cost Per Mille): Check for "CPM" column first. Cost per 1000 impressions/views (e.g., $25 CPM = paid $25 for every 1000 people who saw the content)
+- CPC (Cost Per Click): Check for "CPC" column first. If missing, calculate: Total Spend ÷ Link Clicks. Average cost per click on the campaign link (e.g., $2.50 CPC = paid $2.50 for each click)
 
 **CONVERSION METRICS:**
 - Sales / Conversions: Total number of purchases attributed to the campaign
-- Conversion Rate: (Conversions ÷ Link Clicks) × 100. Percentage of clicks that resulted in purchases (e.g., 3.5% = 35 purchases per 1000 clicks)
-- AOV (Average Order Value): Revenue ÷ Conversions. Average purchase amount per customer (e.g., $75 AOV means each customer spent $75 on average)
+- Conversion Rate: Check for "Conversion Rate" or "CVR" column first. If missing, calculate: (Conversions ÷ Link Clicks) × 100. Percentage of clicks that resulted in purchases (e.g., 3.5% = 35 purchases per 1000 clicks)
+- AOV (Average Order Value): Check for "AOV" column first — DO NOT calculate if this column exists! If the tracker has an "AOV" column, use that value directly. Only calculate (Revenue ÷ Conversions) if the "AOV" column is missing. Average purchase amount per customer (e.g., $75 AOV means each customer spent $75 on average)
 
 **ENGAGEMENT METRICS:**
-- CTR (Click-Through Rate): (Link Clicks ÷ Impressions) × 100. Percentage of viewers who clicked (e.g., 2.5% = 25 clicks per 1000 views)
-- ER (Engagement Rate): (Total Engagements ÷ Followers) × 100. Percentage of followers who engaged (likes, comments, shares)
+- CTR (Click-Through Rate): Check for "CTR" column first. If missing, calculate: (Link Clicks ÷ Impressions) × 100. Percentage of viewers who clicked (e.g., 2.5% = 25 clicks per 1000 views)
+- ER (Engagement Rate): Check for "ER" or "Engagement Rate" column first. If missing, calculate: (Total Engagements ÷ Followers) × 100. Percentage of followers who engaged (likes, comments, shares)
 - Reach / Impressions: Number of unique people who saw the content / Total times content was displayed
 - Link Clicks: Number of times campaign link was clicked
 
 **WHEN ANALYZING CAMPAIGNS:**
-1. Always lead with ROAS and CPA if available — these determine campaign success
-2. Then provide supporting context: Revenue, Conversions, AOV
-3. Finally, engagement metrics: CTR, Impressions, Clicks
-4. If ROAS or CPA are missing, calculate them from available data (Revenue/Spend = ROAS, Spend/Conversions = CPA)
+1. First scan all available columns in originalRow — look for pre-calculated metrics like "ROAS", "CPA", "AOV", "Revenue", "CTR", etc.
+2. Always lead with ROAS and CPA if available (from columns or calculated) — these determine campaign success
+3. Then provide supporting context: Revenue (from column if exists), Conversions, AOV (from column if exists)
+4. Finally, engagement metrics: CTR (from column if exists), Impressions, Clicks
+5. Be explicit when reading from a column vs calculating: "Revenue: $4,135 (from tracker)" or "AOV: ~$129 (calculated from revenue ÷ orders)"
 
 ---
 
