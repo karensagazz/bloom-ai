@@ -3,8 +3,13 @@
 // These act as persistent system settings that are version-controlled
 
 import { PrismaClient } from '@prisma/client'
-import { readFileSync } from 'fs'
-import { join } from 'path'
+
+// Dynamic import to prevent fs from being bundled into client-side code
+const getFs = async () => {
+  const fs = await import('fs')
+  const path = await import('path')
+  return { readFileSync: fs.readFileSync, join: path.join }
+}
 
 const SKILL_CARDS = [
   {
@@ -37,6 +42,7 @@ export async function syncSkillCards(brandId: string, prisma: PrismaClient): Pro
   synced: number
   errors: string[]
 }> {
+  const { readFileSync, join } = await getFs()
   const skillsPath = join(process.cwd(), 'src', 'lib', 'skills')
   let synced = 0
   const errors: string[] = []
