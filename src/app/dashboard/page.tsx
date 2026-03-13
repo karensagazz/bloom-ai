@@ -6,6 +6,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 // import { CreatorCard } from '@/components/creator-card'
 import { prisma } from '@/lib/db'
 
+// Force dynamic rendering - don't try to statically generate this page
+export const dynamic = 'force-dynamic'
+
 async function getDashboardData() {
   console.log('[Dashboard] Loading data...')
   console.log('[Dashboard] DATABASE_URL configured:', !!process.env.DATABASE_URL)
