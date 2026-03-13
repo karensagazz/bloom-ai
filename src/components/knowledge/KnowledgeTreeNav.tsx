@@ -22,6 +22,7 @@ import {
   Book,
   Clipboard,
   CheckCircle,
+  Upload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -48,6 +49,7 @@ interface KnowledgeTreeNavProps {
   onSelectDoc: (docId: string) => void
   onCreateFolder: () => void
   onCreateDocument: () => void
+  onUploadFile: () => void
 }
 
 const iconMap: Record<string, any> = {
@@ -56,6 +58,7 @@ const iconMap: Record<string, any> = {
   'trending-up': TrendingUp,
   'message-square': MessageSquare,
   'file-text': FileText,
+  'file-pdf': FileText,
   star: Star,
   'alert-triangle': AlertTriangle,
   layers: Layers,
@@ -67,6 +70,7 @@ const iconMap: Record<string, any> = {
   clipboard: Clipboard,
   'check-circle': CheckCircle,
   folder: Folder,
+  'book-open': Book,
 }
 
 export default function KnowledgeTreeNav({
@@ -75,6 +79,7 @@ export default function KnowledgeTreeNav({
   onSelectDoc,
   onCreateFolder,
   onCreateDocument,
+  onUploadFile,
 }: KnowledgeTreeNavProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set(folders.map((f) => f.id)) // Expand root folders by default
@@ -197,21 +202,30 @@ export default function KnowledgeTreeNav({
         <p className="text-xs text-stone-500 mt-1">
           Organized learnings & insights
         </p>
-        <div className="flex gap-2 mt-3">
+        <div className="flex flex-col gap-2 mt-3">
           <button
-            onClick={onCreateFolder}
-            className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-md transition-colors"
+            onClick={onUploadFile}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-md transition-colors font-medium"
           >
-            <Plus className="h-3 w-3" />
-            Folder
+            <Upload className="h-4 w-4" />
+            Upload Document
           </button>
-          <button
-            onClick={onCreateDocument}
-            className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-md transition-colors"
-          >
-            <Plus className="h-3 w-3" />
-            Note
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onCreateFolder}
+              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-md transition-colors"
+            >
+              <Plus className="h-3 w-3" />
+              Folder
+            </button>
+            <button
+              onClick={onCreateDocument}
+              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-md transition-colors"
+            >
+              <Plus className="h-3 w-3" />
+              Note
+            </button>
+          </div>
         </div>
       </div>
 

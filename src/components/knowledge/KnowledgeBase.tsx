@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { RefreshCw, AlertCircle, Loader2 } from 'lucide-react'
 import KnowledgeTreeNav from './KnowledgeTreeNav'
 import DocumentViewer from './DocumentViewer'
 
@@ -18,6 +18,9 @@ export default function KnowledgeBase({ brandId }: KnowledgeBaseProps) {
   const [docLoading, setDocLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load knowledge structure
   const loadKnowledgeStructure = useCallback(async () => {
@@ -114,6 +117,56 @@ export default function KnowledgeBase({ brandId }: KnowledgeBaseProps) {
     }
   }
 
+  // Upload file (PDF, DOCX, TXT, MD, CSV)
+  const handleUploadClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    try {
+      setUploading(true)
+      setUploadStatus(`Uploading ${file.name}...`)
+
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch(`/api/brands/${brandId}/knowledge/upload`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) {
+        const errorData = await res.json()
+        throw new Error(errorData.error || 'Upload failed')
+      }
+
+      const result = await res.json()
+      setUploadStatus(result.message || 'Upload successful!')
+
+      // Reload knowledge structure and select the new document
+      await loadKnowledgeStructure()
+      if (result.documentId) {
+        setSelectedDocId(result.documentId)
+      }
+
+      // Clear status after 3 seconds
+      setTimeout(() => setUploadStatus(null), 3000)
+    } catch (err: any) {
+      console.error('Upload failed:', err)
+      setUploadStatus(`Error: ${err.message}`)
+      setTimeout(() => setUploadStatus(null), 5000)
+    } finally {
+      setUploading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   // Initial load
   useEffect(() => {
     loadKnowledgeStructure()
@@ -193,45 +246,65 @@ export default function KnowledgeBase({ brandId }: KnowledgeBaseProps) {
   }
 
   return (
-    <div className="h-[600px] flex border border-stone-200 rounded-lg overflow-hidden bg-white">
-      {/* Left: Tree Navigation (30%) */}
-      <div className="w-[320px] flex-shrink-0 border-r border-stone-200">
-        <KnowledgeTreeNav
-          folders={folders}
-          selectedDocId={selectedDocId}
-          onSelectDoc={handleSelectDoc}
-          onCreateFolder={createFolder}
-          onCreateDocument={createDocument}
-        />
-      </div>
+    <div className="h-[600px] flex flex-col border border-stone-200 rounded-lg overflow-hidden bg-white">
+      {/* Upload Status Banner */}
+      {uploadStatus && (
+        <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-2">
+          {uploading && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
+          <span className="text-sm text-blue-900">{uploadStatus}</span>
+        </div>
+      )}
 
-      {/* Right: Document Viewer (70%) */}
-      <div className="flex-1 min-w-0">
-        <DocumentViewer
-          document={selectedDocument}
-          loading={docLoading}
-          onEdit={() => {
-            // TODO: Implement edit modal
-            alert('Edit functionality coming soon!')
-          }}
-          onDelete={async () => {
-            if (!selectedDocId) return
-            if (!confirm('Delete this document?')) return
-            try {
-              const res = await fetch(
-                `/api/brands/${brandId}/knowledge/documents/${selectedDocId}`,
-                { method: 'DELETE' }
-              )
-              if (res.ok) {
-                setSelectedDocId(null)
-                setSelectedDocument(null)
-                await loadKnowledgeStructure()
+      {/* Hidden File Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.docx,.txt,.md,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      <div className="flex-1 flex min-h-0">
+        {/* Left: Tree Navigation (30%) */}
+        <div className="w-[320px] flex-shrink-0 border-r border-stone-200">
+          <KnowledgeTreeNav
+            folders={folders}
+            selectedDocId={selectedDocId}
+            onSelectDoc={handleSelectDoc}
+            onCreateFolder={createFolder}
+            onCreateDocument={createDocument}
+            onUploadFile={handleUploadClick}
+          />
+        </div>
+
+        {/* Right: Document Viewer (70%) */}
+        <div className="flex-1 min-w-0">
+          <DocumentViewer
+            document={selectedDocument}
+            loading={docLoading}
+            onEdit={() => {
+              // TODO: Implement edit modal
+              alert('Edit functionality coming soon!')
+            }}
+            onDelete={async () => {
+              if (!selectedDocId) return
+              if (!confirm('Delete this document?')) return
+              try {
+                const res = await fetch(
+                  `/api/brands/${brandId}/knowledge/documents/${selectedDocId}`,
+                  { method: 'DELETE' }
+                )
+                if (res.ok) {
+                  setSelectedDocId(null)
+                  setSelectedDocument(null)
+                  await loadKnowledgeStructure()
+                }
+              } catch (err) {
+                console.error('Failed to delete:', err)
               }
-            } catch (err) {
-              console.error('Failed to delete:', err)
-            }
-          }}
-        />
+            }}
+          />
+        </div>
       </div>
     </div>
   )
