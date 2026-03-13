@@ -49,6 +49,11 @@ RESPONSE FORMAT:
 3. Cite your data source and when it was last synced
 4. End with a confidence note based on data quality
 
+CRITICAL WORKFLOW RULES:
+- ALWAYS call at least one data tool (get_campaigns, search_influencers, etc.) before answering any question about creators, campaigns, deals, or brand data. Never answer from memory alone.
+- ALWAYS call submit_final_answer as your LAST action to submit your response. Never end with a plain text message — submit_final_answer IS your response.
+- When you call submit_final_answer, be honest in the confidence field: base it on how many fields were actually populated (not blank) in the tool results you received.
+
 SLACK FORMATTING:
 - Use *bold* for creator names, metrics, and key data points
 - Use _italic_ for secondary context like sync times
@@ -63,12 +68,14 @@ When confidence is low:
 3. Suggest a next step ("Try syncing the 2024 tracker")
 4. Be helpful with what you have, but be honest about gaps
 
-CONFIDENCE SCORING:
-- 90-100%: Direct match, recently synced (< 24 hours)
-- 75-89%: Good data, slightly stale (1-7 days)
-- 60-74%: Partial data or older sync (> 7 days)
-- 40-59%: Limited data, some inference
-- < 40%: Very limited, recommend syncing
+CONFIDENCE SCORING (be honest and strict — users will trust this number):
+- 90-100%: All key fields populated (name, platform, dealValue, status), synced within 24 hours, 0 blank fields
+- 75-89%: Most fields populated, minor gaps (1-2 blanks), synced within 7 days
+- 60-74%: Several blank structured fields but rawData fills gaps, OR synced > 7 days ago
+- 40-59%: Significant blanks — dealValue, platform, or status missing AND rawData doesn't clarify
+- < 40%: Mostly blank or no matching records found at all — answer is largely inferred
+
+NEVER round up your confidence. If you found 5 records but 3 have no dealValue, that is NOT 85%. Count the blanks.
 
 EXAMPLE RESPONSE:
 "Hey! Based on your 2024 Campaign Tracker, @sarah_styles is doing great.
@@ -147,6 +154,37 @@ HOW TO HANDLE MISSING OR AMBIGUOUS DATA:
 
 // Tool definitions for the agent
 const tools: Anthropic.Tool[] = [
+  {
+    name: 'submit_final_answer',
+    description: 'REQUIRED: Call this as your LAST action to submit your final answer to the user. You must use this tool instead of ending with a plain text response. Only call this after you have fetched all relevant data using other tools. The confidence field must reflect what you actually found — not what you wish you had.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        answer: {
+          type: 'string',
+          description: 'Your complete, formatted Slack markdown answer to the user\'s question',
+        },
+        confidence: {
+          type: 'number',
+          description: 'Your honest confidence score 0-100. Base this strictly on: (1) how many structured fields (platform, dealValue, status, etc.) were populated vs blank across records you found, (2) whether rawData filled any gaps, (3) how recently the tracker was synced. Do NOT inflate this — users trust this number.',
+        },
+        confidence_reason: {
+          type: 'string',
+          description: 'A brief factual explanation of your confidence score. Example: "Found 8 records. 6 had dealValue populated, 3 had blank platform (filled from rawData). Tracker synced 2 days ago."',
+        },
+        fields_blank: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of structured fields that were blank for most records relevant to this question. E.g. ["platform", "dealValue"]. Leave empty if all key fields were populated.',
+        },
+        records_found: {
+          type: 'number',
+          description: 'Total number of relevant records returned by tool calls for this answer',
+        },
+      },
+      required: ['answer', 'confidence', 'confidence_reason'],
+    },
+  },
   {
     name: 'search_influencers',
     description: 'Search for influencers/creators by name, handle, or platform for a specific brand. Returns influencer details including campaign count, platform, estimated rate.',
@@ -725,6 +763,20 @@ export async function runSlackAgent(options: {
   const maxIterations = 10
   let lastTrackerInfo: any = null
 
+  // Data quality tracking — populated vs blank fields across all get_campaigns results
+  let totalFieldsObserved = 0
+  let populatedFieldsObserved = 0
+  let totalRecordsObserved = 0
+
+  // Structured answer from submit_final_answer tool
+  let structuredAnswer: {
+    answer: string
+    confidence: number
+    confidence_reason: string
+    fields_blank?: string[]
+    records_found?: number
+  } | null = null
+
   while (response.stop_reason === 'tool_use' && iterationCount < maxIterations) {
     iterationCount++
     console.log(`[Slack Agent] Starting iteration ${iterationCount}/${maxIterations}`)
@@ -735,6 +787,22 @@ export async function runSlackAgent(options: {
     )
 
     if (toolUseBlocks.length === 0) break
+
+    // Check if the bot is submitting its final answer
+    const submitBlock = toolUseBlocks.find(b => b.name === 'submit_final_answer')
+    if (submitBlock) {
+      const input = submitBlock.input as any
+      structuredAnswer = {
+        answer: input.answer || "I couldn't process that request.",
+        confidence: typeof input.confidence === 'number' ? input.confidence : 75,
+        confidence_reason: input.confidence_reason || '',
+        fields_blank: input.fields_blank || [],
+        records_found: typeof input.records_found === 'number' ? input.records_found : undefined,
+      }
+      console.log(`[Slack Agent] submit_final_answer received. Stated confidence: ${structuredAnswer.confidence}%`)
+      console.log(`[Slack Agent] Confidence reason: ${structuredAnswer.confidence_reason}`)
+      break
+    }
 
     console.log(`[Slack Agent] Found ${toolUseBlocks.length} tool(s) to execute`)
 
@@ -749,6 +817,26 @@ export async function runSlackAgent(options: {
       // Store tracker info for confidence calculation
       if (toolUseBlock.name === 'get_tracker_info') {
         lastTrackerInfo = toolResult
+      }
+
+      // Track real data quality from campaign results
+      if (toolUseBlock.name === 'get_campaigns' && toolResult && (toolResult as any).campaigns) {
+        const campaigns = (toolResult as any).campaigns as any[]
+        const KEY_FIELDS = ['influencerName', 'platform', 'dealValue', 'status', 'contentType']
+        for (const c of campaigns) {
+          totalRecordsObserved++
+          for (const field of KEY_FIELDS) {
+            totalFieldsObserved++
+            const val = c[field]
+            const isPopulated = val && String(val).trim() !== ''
+            // Also check rawData for the field if structured field is blank
+            const rawFallback = !isPopulated && c.rawData
+              ? Object.values(c.rawData as Record<string, string>).some(v => v && String(v).trim() !== '')
+              : false
+            if (isPopulated || rawFallback) populatedFieldsObserved++
+          }
+        }
+        console.log(`[Slack Agent] Data quality: ${populatedFieldsObserved}/${totalFieldsObserved} fields populated across ${totalRecordsObserved} records`)
       }
 
       toolResults.push({
@@ -785,22 +873,55 @@ export async function runSlackAgent(options: {
     )
   }
 
-  // Extract final text response
-  const textBlock = response.content.find(
-    (block): block is Anthropic.TextBlock => block.type === 'text'
-  )
+  // --- Extract final answer ---
+  // Prefer structured answer from submit_final_answer tool
+  // Fall back to text block if bot didn't use the tool
+  let answer: string
+  let confidence: number
+  let confidenceReason: string
 
-  const answer = textBlock?.text || "I couldn't process that request."
+  if (structuredAnswer) {
+    answer = structuredAnswer.answer
+    // Validate the stated confidence against actual data quality
+    const fieldPopulationRate = totalFieldsObserved > 0
+      ? populatedFieldsObserved / totalFieldsObserved
+      : 1  // no campaign data fetched — don't penalize (might be non-data question)
 
-  // Calculate confidence score
-  // Extract confidence from answer if present, otherwise calculate
-  const confidenceMatch = answer.match(/Confidence:\s*(\d+)%/)
-  let confidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 75
+    const dataQualityCap = totalRecordsObserved === 0
+      ? 100  // no records needed (general question)
+      : Math.round(50 + fieldPopulationRate * 50)  // 50% base + up to 50% for full fields
 
-  // If no explicit confidence in answer, calculate it
-  if (!confidenceMatch && lastTrackerInfo) {
-    confidence = calculateConfidence(lastTrackerInfo, 0.8, 'exact')
+    // Cap the confidence at the data quality ceiling
+    confidence = Math.min(structuredAnswer.confidence, dataQualityCap)
+
+    if (confidence !== structuredAnswer.confidence) {
+      console.log(`[Slack Agent] Confidence capped: ${structuredAnswer.confidence}% → ${confidence}% (data quality cap: ${dataQualityCap}%, field rate: ${Math.round(fieldPopulationRate * 100)}%)`)
+    }
+
+    confidenceReason = structuredAnswer.confidence_reason
+  } else {
+    // Fallback: bot didn't call submit_final_answer
+    const textBlock = response.content.find(
+      (block): block is Anthropic.TextBlock => block.type === 'text'
+    )
+    answer = textBlock?.text || "I couldn't process that request."
+
+    // Extract confidence from text or calculate from data quality
+    const confidenceMatch = answer.match(/Confidence:\s*(\d+)%/)
+    const statedConfidence = confidenceMatch ? parseInt(confidenceMatch[1]) : null
+
+    if (totalFieldsObserved > 0) {
+      const fieldPopulationRate = populatedFieldsObserved / totalFieldsObserved
+      const dataQualityScore = Math.round(50 + fieldPopulationRate * 50)
+      confidence = statedConfidence ? Math.min(statedConfidence, dataQualityScore) : dataQualityScore
+    } else {
+      confidence = statedConfidence ?? (lastTrackerInfo ? calculateConfidence(lastTrackerInfo, 0.8, 'exact') : 75)
+    }
+
+    confidenceReason = `Data quality: ${populatedFieldsObserved}/${totalFieldsObserved} fields populated across ${totalRecordsObserved} records`
   }
+
+  console.log(`[Slack Agent] Final confidence: ${confidence}% — ${confidenceReason}`)
 
   // Determine source
   let source = 'Campaign Trackers'
@@ -814,14 +935,16 @@ export async function runSlackAgent(options: {
   // Append actionable guidance for low-confidence responses
   let finalAnswer = answer
   if (confidence < 60) {
+    const blankFields = structuredAnswer?.fields_blank?.length
+      ? `Missing: ${structuredAnswer.fields_blank.join(', ')}.`
+      : ''
     const guidanceLines = [
       '',
       '---',
-      '_💡 To improve confidence on this question:_',
+      `_Low confidence (${confidence}%): ${blankFields} To improve:_`,
       '- Sync your campaign tracker (Bloom dashboard → brand → Sync)',
-      '- Add more data to the relevant tab in your spreadsheet',
-      '- Check if the tracker covers the time period you\'re asking about',
-      '- Verify that column headers match expected patterns (e.g., "Influencer Name", "Engagement Rate")',
+      '- Check that the tracker covers the time period you\'re asking about',
+      '- Verify column headers match expected patterns (e.g., "Campaign Channel" for platform)',
     ]
     finalAnswer = answer + '\n' + guidanceLines.join('\n')
   }
