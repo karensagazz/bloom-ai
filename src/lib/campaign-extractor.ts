@@ -235,7 +235,7 @@ export async function extractCampaignRecords(
   brandName: string,
   tabName: string,
   headers: string[],
-  rows: Record<string, string>[],
+  rows: Record<string, string | number>[],
   year?: number
 ): Promise<ExtractedCampaignRecord[]> {
   // Skip tabs with no data
@@ -423,7 +423,7 @@ export async function extractSOWRecords(
   brandName: string,
   tabName: string,
   headers: string[],
-  rows: Record<string, string>[],
+  rows: Record<string, string | number>[],
   year?: number,
   platformFromTab?: string
 ): Promise<ExtractedSOWRecord[]> {
