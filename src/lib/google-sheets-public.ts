@@ -256,11 +256,29 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
     }
 
     // First row is headers
-    const headers = rows[0]
+    const rawHeaders = rows[0]
+
+    // CRITICAL FIX: Preserve ALL columns, even if header is empty
+    // Generate synthetic names for empty headers to avoid data loss
+    const headers = rawHeaders.map((header, i) => {
+      const trimmed = (header || '').trim()
+      if (!trimmed) {
+        // Column A = index 0, so we use letters
+        const colLetter = String.fromCharCode(65 + i) // A, B, C, D...
+        return `Column_${colLetter}`
+      }
+      return trimmed
+    })
+
+    console.log(`[Sheets] Tab headers (${headers.length} columns):`,
+      headers.slice(0, 10).map(h => `"${h}"`).join(', '),
+      headers.length > 10 ? `... and ${headers.length - 10} more` : ''
+    )
 
     // Convert remaining rows to objects
     const dataRows = rows.slice(1).map((row, index) => {
       const obj: Record<string, string> = {}
+      // Use the normalized headers (never empty strings)
       headers.forEach((header, i) => {
         obj[header] = row[i] || ''
       })
