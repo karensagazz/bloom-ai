@@ -53,7 +53,10 @@ export async function getSpreadsheetInfo(spreadsheetId: string) {
 
 // Get all data from a sheet as array of objects
 // First row is treated as headers
-export async function getSheetData(spreadsheetId: string, sheetName?: string) {
+export async function getSheetData(
+  spreadsheetId: string,
+  sheetName?: string
+): Promise<{ headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string | number> }> }> {
   const sheets = await getSheetsClient()
 
   // Default to first sheet if not specified
@@ -72,11 +75,32 @@ export async function getSheetData(spreadsheetId: string, sheetName?: string) {
   // First row is headers
   const headers = rows[0] as string[]
 
+  // Helper function to parse cell values with type coercion
+  const parseCellValue = (value: any): string | number => {
+    if (!value) return ''
+
+    const str = String(value).trim()
+    if (!str) return ''
+
+    // Remove common currency/formatting characters for number detection
+    const cleaned = str.replace(/[$,€£¥%]/g, '')
+
+    // Check if it's a valid number after cleanup
+    if (cleaned && !isNaN(Number(cleaned)) && cleaned !== '') {
+      const num = Number(cleaned)
+      if (isFinite(num)) {
+        return num
+      }
+    }
+
+    return str
+  }
+
   // Convert remaining rows to objects
   const dataRows = rows.slice(1).map((row, index) => {
-    const obj: Record<string, string> = {}
+    const obj: Record<string, string | number> = {}
     headers.forEach((header, i) => {
-      obj[header] = row[i] || ''
+      obj[header] = parseCellValue(row[i])
     })
     return {
       rowIndex: index,

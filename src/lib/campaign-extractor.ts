@@ -183,9 +183,9 @@ If no campaign data found, return: []`
     }
 
     // Map back to include raw data — try to match by influencerName for accuracy
-    const mapped = parsed.map((record: any, index: number) => {
+    const mapped: ExtractedCampaignRecord[] = parsed.map((record: any, index: number) => {
       // Try to find the matching raw row by influencer name
-      let rawRow = batchRows[index]  // default: positional match
+      let rawRow: Record<string, string | number> = batchRows[index]  // default: positional match
       if (record.influencerName) {
         const nameMatch = batchRows.find(r => {
           const vals = Object.values(r)
@@ -203,7 +203,7 @@ If no campaign data found, return: []`
         dealValue: record.dealValue || undefined,
         status: record.status || undefined,
         quarter: record.quarter || undefined,
-        rawData: rawRow || undefined,
+        rawData: rawRow as Record<string, string | number>,
       }
     })
 
@@ -370,8 +370,8 @@ If no SOW/contract data found, return: []`
     }
 
     // Map back with rawData — match by influencer name for accuracy
-    const mapped = parsed.map((record: any, index: number) => {
-      let rawRow = batchRows[index]
+    const mapped: ExtractedSOWRecord[] = parsed.map((record: any, index: number) => {
+      let rawRow: Record<string, string | number> = batchRows[index]
       if (record.influencerName) {
         const nameMatch = batchRows.find(r => {
           const vals = Object.values(r)
@@ -393,7 +393,7 @@ If no SOW/contract data found, return: []`
         startDate: record.startDate || undefined,
         endDate: record.endDate || undefined,
         status: record.status || undefined,
-        rawData: rawRow || undefined,
+        rawData: rawRow as Record<string, string | number>,
       }
     })
 
