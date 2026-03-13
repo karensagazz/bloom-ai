@@ -80,32 +80,48 @@ TONE:
 HOW TO SEARCH (MANDATORY — follow every time):
 
 For ANY question about a creator, campaign, deal, or brand performance:
-1. Call get_campaigns and/or search_influencers — this is the primary source of truth
-2. Call search_knowledge_documents — this has performance notes, insights, contract context, and strategic learnings that campaigns data alone doesn't have
-3. Call get_tracker_info — to know how fresh the data is
-4. If step 1 returns 0 results: try again with partial name, no name filter, or broader query. NEVER give up after one failed search.
-5. Only after all three sources are checked: call submit_final_answer
+1. Call get_campaigns and/or search_influencers — structured extracted data, primary source
+2. Call search_knowledge_documents — performance notes, insights, uploaded briefs, strategic learnings
+3. Call get_tracker_info — to know which trackers exist and how fresh the data is
+4. If steps 1-2 return blank fields or 0 results: call get_raw_tracker_data with the creator/topic as the search term. This gives you the ACTUAL spreadsheet rows with every original column — read them like a human would read the sheet.
+5. Only after all sources are checked: call submit_final_answer
 
-You CANNOT say "no data found" without having searched campaigns, influencers, AND knowledge documents.
+You CANNOT say "no data found" without having used get_raw_tracker_data as a final fallback.
+
+HOW TO READ THE RAW SPREADSHEET (get_raw_tracker_data):
+
+This tool returns the original Google Sheet rows exactly as they were — every column, every cell value. When you receive this data:
+1. Read the columnHeaders list first — this tells you the full structure of the sheet (like scanning the header row in a spreadsheet)
+2. For each row, read originalRow as if you're reading a spreadsheet row left to right
+3. Use your marketing expertise to understand what each column means — the column names may not match standard field names but the data is all there
+4. A row with a person's name, a dollar amount, a platform, and a content type IS a complete campaign record — even if those values are under unusual column names
+5. Piece together the answer from what you actually see in the rows, not from what structured fields say
 
 ---
 
-HOW TO READ rawData (CRITICAL):
+HOW TO READ TRACKER DATA (CRITICAL — READ THIS CAREFULLY):
 
-Every campaign record has a rawData field containing the original spreadsheet row as key-value pairs. When structured fields (platform, dealValue, status, contentType) are blank, THIS IS WHERE THE REAL DATA IS.
+There are two layers of data for every campaign record:
+- EXTRACTED FIELDS (influencerName, platform, dealValue, status, contentType): These are auto-mapped guesses. They are often wrong, incomplete, or missing entirely. Do NOT treat them as authoritative.
+- RAW DATA (originalRow / rawData): This is the actual spreadsheet row, every column, exactly as the team entered it. THIS IS THE SOURCE OF TRUTH.
 
-When you receive campaign records:
-1. ALWAYS read rawData for every record — do not ignore it
-2. Map column names to meanings using your marketing expertise:
-   - "Channel", "Platform", "Social", "Networks" → social media platform
-   - "Fee", "Rate", "Compensation", "Budget", "Amount", "$" → deal value
-   - "Deliverable", "Post", "Content", "Format", "Type" → content type
-   - "Status", "Stage", "Progress", "Done" → campaign status
-   - "Date", "Live", "Publish", "Go Live" → post date
-   - "Impressions", "Views", "Reach" → performance metrics
-3. Extract the actual values from rawData and use them in your answer
-4. A record with blank structured fields but populated rawData is NOT a data gap — it's just a column mapping difference. Read the raw data and answer.
-5. Never say "structured fields are blank" to the user — just tell them what the data says
+Every tracker is structured differently. Your job is to learn the column structure of each tracker and read it like a human analyst would.
+
+When you get data from get_raw_tracker_data:
+1. First read columnHeaders — understand the full shape of the sheet. What are all the columns? What kind of information does this tracker track?
+2. Then read each row's originalRow — every key-value pair is a column and its cell value
+3. Apply marketing expertise to understand what each column means in context:
+   - Don't force columns into 5 buckets. A tracker might have 20+ meaningful columns: "February Deliverables", "March Deliverables", "Exclusivity Window", "Gifting Value", "Usage Rights", "Story Views", "Link Clicks", etc.
+   - Read ALL of them. All are potentially relevant to the question being asked.
+4. When answering, draw from the FULL column picture — not just a subset of standard fields
+5. If a column exists and has a value, it's data. Use it.
+
+When you get data from get_campaigns:
+- The rawData field in each record is the original row — same as above
+- The extractedName/platform/dealValue fields are helpers, not truth
+- Always cross-check extracted fields against rawData
+
+NEVER say "structured fields are blank" — that's an internal system detail. Just read the raw data and answer.
 
 ---
 
@@ -313,6 +329,28 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ['brandId', 'query'],
+    },
+  },
+  {
+    name: 'get_raw_tracker_data',
+    description: 'Read the actual raw spreadsheet rows exactly as they appear in the original Google Sheet — with all original column headers and cell values. Use this when you need to understand the sheet structure, find data that may not have mapped to standard fields, or read a creator\'s full row in context. This is the closest thing to opening the spreadsheet yourself.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        brandId: {
+          type: 'string',
+          description: 'The brand ID to query',
+        },
+        search: {
+          type: 'string',
+          description: 'Optional: filter rows to those containing this text anywhere in any column (case-insensitive). Leave blank to get a sample of all rows.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max rows to return (default 100, max 300). For a structural overview, use 20-30. For a specific creator, use 50.',
+        },
+      },
+      required: ['brandId'],
     },
   },
   {
@@ -768,6 +806,83 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           category: l.category,
         })),
         source: 'Knowledge Base + Related Data',
+      }
+    }
+
+    case 'get_raw_tracker_data': {
+      const { search, limit = 100 } = toolInput
+      const cap = Math.min(limit, 300)
+
+      // Fetch all campaign records with rawData for this brand
+      const allRecords = await prisma.campaignRecord.findMany({
+        where: { brandId },
+        include: {
+          tracker: { select: { label: true, year: true, lastSyncedAt: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: search ? 2000 : cap, // fetch more when searching so we can filter
+      })
+
+      // Parse rawData and optionally filter by search term
+      const searchLower = search?.toLowerCase()
+      const rows = allRecords
+        .map(r => {
+          let raw: Record<string, any> = {}
+          if (r.rawData) {
+            try { raw = typeof r.rawData === 'string' ? JSON.parse(r.rawData) : (r.rawData as any) } catch { raw = {} }
+          }
+          return {
+            trackerLabel: r.tracker?.label || 'Unknown Tracker',
+            trackerYear: r.tracker?.year,
+            lastSynced: r.tracker?.lastSyncedAt,
+            // Structured fields (may be blank if extraction missed them)
+            extractedName: r.influencerName || null,
+            extractedPlatform: r.platform || null,
+            extractedDealValue: r.dealValue || null,
+            extractedStatus: r.status || null,
+            // The full original row — every column exactly as it appeared in the sheet
+            originalRow: raw,
+          }
+        })
+        .filter(r => {
+          if (!searchLower) return true
+          // Check extracted fields
+          const structuredText = [r.extractedName, r.extractedPlatform, r.extractedStatus].join(' ').toLowerCase()
+          if (structuredText.includes(searchLower)) return true
+          // Check every raw cell value
+          const rawText = Object.values(r.originalRow).map(v => String(v || '').toLowerCase()).join(' ')
+          return rawText.includes(searchLower)
+        })
+        .slice(0, cap)
+
+      // Collect all unique column headers seen across rows so the bot understands the sheet structure
+      const allHeaders = new Set<string>()
+      rows.forEach(r => Object.keys(r.originalRow).forEach(k => allHeaders.add(k)))
+
+      // Group by tracker for context
+      const trackerGroups: Record<string, { lastSynced: Date | null, rowCount: number }> = {}
+      rows.forEach(r => {
+        const key = `${r.trackerLabel} (${r.trackerYear || 'year unknown'})`
+        if (!trackerGroups[key]) trackerGroups[key] = { lastSynced: r.lastSynced || null, rowCount: 0 }
+        trackerGroups[key].rowCount++
+      })
+
+      return {
+        totalRowsReturned: rows.length,
+        trackers: Object.entries(trackerGroups).map(([name, info]) => ({
+          name,
+          lastSynced: info.lastSynced,
+          rowsInThisResult: info.rowCount,
+        })),
+        columnHeaders: Array.from(allHeaders),
+        note: 'originalRow contains every column from the spreadsheet exactly as stored. Use column names and values to interpret what each row represents, even when extractedName/extractedPlatform etc. are blank.',
+        rows: rows.map(r => ({
+          extractedName: r.extractedName,
+          extractedPlatform: r.extractedPlatform,
+          extractedDealValue: r.extractedDealValue,
+          extractedStatus: r.extractedStatus,
+          originalRow: r.originalRow,
+        })),
       }
     }
 
