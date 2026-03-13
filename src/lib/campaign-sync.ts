@@ -28,6 +28,45 @@ import {
 } from './sync-progress'
 
 // ============================================================================
+// BATCH PROCESSING HELPERS - Prevent database/memory issues with large datasets
+// ============================================================================
+
+const BATCH_SIZE = 500 // Records per database write
+
+/**
+ * Chunked createMany to prevent database statement size limits
+ * Splits large arrays into smaller batches for reliable writes
+ */
+async function batchCreateMany<T>(
+  prisma: PrismaClient,
+  model: 'campaignRecord' | 'campaignInsight',
+  data: T[],
+  onProgress?: (processed: number, total: number) => void
+): Promise<number> {
+  if (data.length === 0) return 0
+
+  let totalCreated = 0
+
+  for (let i = 0; i < data.length; i += BATCH_SIZE) {
+    const batch = data.slice(i, i + BATCH_SIZE)
+
+    if (model === 'campaignRecord') {
+      await (prisma.campaignRecord as any).createMany({ data: batch })
+    } else if (model === 'campaignInsight') {
+      await (prisma.campaignInsight as any).createMany({ data: batch })
+    }
+
+    totalCreated += batch.length
+
+    if (onProgress) {
+      onProgress(totalCreated, data.length)
+    }
+  }
+
+  return totalCreated
+}
+
+// ============================================================================
 // TAB ROUTING - Explicit mapping of tabs to data types
 // ============================================================================
 
@@ -228,32 +267,32 @@ export async function syncCampaignTracker(
             )
 
             if (sowRecords.length > 0) {
-              await prisma.campaignRecord.createMany({
-                data: sowRecords.map((record) => ({
-                  brandId: tracker.brandId,
-                  trackerId,
-                  influencerName: record.influencerName || null,
-                  handle: record.handle || null,
-                  campaignName: record.campaignName || null,
-                  platform: record.platform || platformHint || null,
-                  contentType: null,
-                  dealValue: record.dealValue || null,
-                  status: record.status || null,
-                  year: tracker.year || null,
-                  quarter: null,
-                  tabName: tab.tabName,
-                  rawData: JSON.stringify(record.rawData || {}),
-                  recordType: 'sow',
-                  contractType: record.contractType || null,
-                  deliverables: record.deliverables ? JSON.stringify(record.deliverables) : null,
-                  paymentTerms: record.paymentTerms || null,
-                  usageRights: record.usageRights || null,
-                  exclusivity: record.exclusivity || null,
-                  contractStart: record.startDate || null,
-                  contractEnd: record.endDate || null,
-                  totalValue: parseValueToCents(record.dealValue),
-                })),
-              })
+              // Use batch processing to avoid database statement size limits
+              const sowData = sowRecords.map((record) => ({
+                brandId: tracker.brandId,
+                trackerId,
+                influencerName: record.influencerName || null,
+                handle: record.handle || null,
+                campaignName: record.campaignName || null,
+                platform: record.platform || platformHint || null,
+                contentType: null,
+                dealValue: record.dealValue || null,
+                status: record.status || null,
+                year: tracker.year || null,
+                quarter: null,
+                tabName: tab.tabName,
+                rawData: JSON.stringify(record.rawData || {}),
+                recordType: 'sow',
+                contractType: record.contractType || null,
+                deliverables: record.deliverables ? JSON.stringify(record.deliverables) : null,
+                paymentTerms: record.paymentTerms || null,
+                usageRights: record.usageRights || null,
+                exclusivity: record.exclusivity || null,
+                contractStart: record.startDate || null,
+                contractEnd: record.endDate || null,
+                totalValue: parseValueToCents(record.dealValue),
+              }))
+              await batchCreateMany(prisma, 'campaignRecord', sowData)
               totalRecords += sowRecords.length
               console.log(`  ✅ Extracted ${sowRecords.length} contracts`)
             }
@@ -276,24 +315,24 @@ export async function syncCampaignTracker(
             )
 
             if (records.length > 0) {
-              await prisma.campaignRecord.createMany({
-                data: records.map((record) => ({
-                  brandId: tracker.brandId,
-                  trackerId,
-                  influencerName: record.influencerName || null,
-                  handle: record.handle || null,
-                  campaignName: record.campaignName || null,
-                  platform: record.platform || null,
-                  contentType: record.contentType || null,
-                  dealValue: record.dealValue || null,
-                  status: record.status || null,
-                  year: tracker.year || null,
-                  quarter: record.quarter || null,
-                  tabName: tab.tabName,
-                  rawData: JSON.stringify(record.rawData || {}),
-                  recordType: 'campaign',
-                })),
-              })
+              // Use batch processing to avoid database statement size limits
+              const campaignData = records.map((record) => ({
+                brandId: tracker.brandId,
+                trackerId,
+                influencerName: record.influencerName || null,
+                handle: record.handle || null,
+                campaignName: record.campaignName || null,
+                platform: record.platform || null,
+                contentType: record.contentType || null,
+                dealValue: record.dealValue || null,
+                status: record.status || null,
+                year: tracker.year || null,
+                quarter: record.quarter || null,
+                tabName: tab.tabName,
+                rawData: JSON.stringify(record.rawData || {}),
+                recordType: 'campaign',
+              }))
+              await batchCreateMany(prisma, 'campaignRecord', campaignData)
               totalRecords += records.length
               console.log(`  ✅ Extracted ${records.length} campaigns`)
             }

@@ -58,14 +58,19 @@ const SYSTEM_FOLDER_STRUCTURE: FolderConfig[] = [
     orderIndex: 4,
   },
   {
+    name: 'Industry Knowledge',
+    icon: 'book-open',
+    orderIndex: 5,
+  },
+  {
     name: 'Slack Context',
     icon: 'message-square',
-    orderIndex: 5,
+    orderIndex: 6,
   },
   {
     name: 'Custom Notes',
     icon: 'folder',
-    orderIndex: 6,
+    orderIndex: 7,
   },
 ]
 

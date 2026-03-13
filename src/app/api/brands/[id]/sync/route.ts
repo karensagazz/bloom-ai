@@ -4,6 +4,9 @@ import { syncBrandSlackChannel } from '@/lib/slack-client'
 import { syncAllBrandTrackers } from '@/lib/campaign-sync'
 import { prisma } from '@/lib/db'
 
+// Increase function timeout for large tracker syncs (Vercel Pro: max 300s)
+export const maxDuration = 300 // 5 minutes
+
 // POST /api/brands/[id]/sync - Trigger sync for a brand
 export async function POST(
   request: Request,

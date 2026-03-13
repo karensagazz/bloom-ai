@@ -67,7 +67,67 @@ IMPORTANT:
 - Only respond when asked a question
 - Read thread context for follow-ups
 - Cite specific tracker names and sync times
-- Offer to provide more detail if helpful`
+- Offer to provide more detail if helpful
+
+EXPERT CONTEXT:
+
+You are not just retrieving data. You think like a senior influencer marketing strategist.
+
+When answering questions, consider:
+- Creator performance benchmarks
+- Audience fit and authenticity
+- Engagement quality vs follower count
+- Creator tier strategy (nano, micro, mid-tier, macro)
+- Platform-specific performance differences
+- Brand safety and creator-brand alignment
+- CPM, CPE, EMV and ROI signals
+
+Use brand data first, but apply influencer marketing expertise to interpret it.
+
+KNOWLEDGE PRIORITY:
+
+When answering, prioritize sources in this order:
+1. Internal campaign trackers
+2. Creator performance databases
+3. Campaign briefs or documentation
+4. Historical campaign notes
+5. Influencer marketing industry best practices
+
+If internal data conflicts with industry norms, trust internal data.
+
+DATA INTEGRITY RULE:
+
+Never fabricate:
+- Creator performance metrics
+- Campaign results
+- Tracker entries
+- Sync timestamps
+
+If data is missing, say so clearly and suggest what should be synced or checked.
+
+SKILL CARDS:
+
+You have 4 skill cards available. Load the relevant one(s) based on the task:
+- skill_tracker_reading: When a spreadsheet, Airtable export, or Google Sheet is uploaded/discussed
+- skill_performance_benchmarks: When asked to evaluate, rank, or analyze creator/campaign performance
+- skill_campaign_strategy: When asked to plan, review, or advise on a campaign
+- skill_legal_compliance: When asked about contracts, SOW, rates, FTC disclosures, or usage rights
+
+HOW TO PROCESS A SPREADSHEET:
+
+When a file is uploaded or tracker data is discussed, always follow this order:
+1. Read the structure first — scan all tab names and column headers
+2. Map columns to concepts — use skill_tracker_reading to identify what each column represents
+3. Confirm your understanding — briefly tell the user what tabs and columns you found before analyzing
+4. Then answer — apply the relevant skill card benchmarks to the data
+
+Never skip Step 3. Always confirm what you read before drawing conclusions.
+
+HOW TO HANDLE MISSING OR AMBIGUOUS DATA:
+
+- If a column name is unclear, state your best interpretation and ask for confirmation
+- If data is missing, flag it clearly: "I could not find [X] in the uploaded file. This affects my ability to assess [Y]."
+- Never fabricate or assume data that is not present`
 
 // Tool definitions for the agent
 const tools: Anthropic.Tool[] = [
@@ -174,6 +234,43 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ['brandId'],
+    },
+  },
+  {
+    name: 'search_knowledge_documents',
+    description: 'Search uploaded industry knowledge documents, brand briefs, and other reference materials. Use this to find best practices, strategy guidance, or background context.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        brandId: {
+          type: 'string',
+          description: 'The brand ID to search within',
+        },
+        query: {
+          type: 'string',
+          description: 'Search query to find relevant knowledge documents',
+        },
+      },
+      required: ['brandId', 'query'],
+    },
+  },
+  {
+    name: 'get_skill_card',
+    description: 'Load a specialized skill card for detailed guidance on reading trackers, performance benchmarks, campaign strategy, or legal compliance.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        brandId: {
+          type: 'string',
+          description: 'The brand ID to search within',
+        },
+        skillType: {
+          type: 'string',
+          enum: ['reading', 'benchmarks', 'strategy', 'compliance'],
+          description: 'Type of skill card: reading (tracker interpretation), benchmarks (performance evaluation), strategy (campaign planning), compliance (legal/contracts)',
+        },
+      },
+      required: ['brandId', 'skillType'],
     },
   },
 ]
@@ -401,6 +498,91 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           recordCount: t._count.campaignRecords,
         })),
         lastSyncedAt: brand.lastSyncedAt,
+      }
+    }
+
+    case 'search_knowledge_documents': {
+      const { query } = toolInput
+
+      // Search knowledge documents by content and title
+      const documents = await prisma.knowledgeDocument.findMany({
+        where: {
+          brandId,
+          OR: [
+            { title: { contains: query, mode: 'insensitive' } },
+            { content: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        include: {
+          folder: true,
+        },
+        take: 5,
+      })
+
+      if (documents.length === 0) {
+        return {
+          count: 0,
+          message: `No knowledge documents found matching "${query}". Consider uploading relevant industry knowledge or brand documentation.`,
+          documents: [],
+        }
+      }
+
+      return {
+        count: documents.length,
+        documents: documents.map(doc => ({
+          title: doc.title,
+          folder: doc.folder?.name || 'Unknown',
+          documentType: doc.documentType,
+          excerpt: doc.content?.slice(0, 500) + (doc.content && doc.content.length > 500 ? '...' : ''),
+          tags: doc.tags,
+          isIndustryKnowledge: doc.folder?.name === 'Industry Knowledge',
+        })),
+        source: 'Knowledge Base',
+      }
+    }
+
+    case 'get_skill_card': {
+      const { skillType } = toolInput
+
+      // Map skill type to document search terms
+      const skillMap: Record<string, string> = {
+        'reading': 'skill_tracker_reading',
+        'benchmarks': 'skill_performance_benchmarks',
+        'strategy': 'skill_campaign_strategy',
+        'compliance': 'skill_legal_compliance',
+      }
+
+      const skillName = skillMap[skillType]
+      if (!skillName) {
+        return { error: `Unknown skill type: ${skillType}` }
+      }
+
+      // Search for skill card document by title or tags
+      const skillDoc = await prisma.knowledgeDocument.findFirst({
+        where: {
+          brandId,
+          OR: [
+            { title: { contains: skillName, mode: 'insensitive' } },
+            { title: { contains: skillType, mode: 'insensitive' } },
+          ],
+        },
+        include: {
+          folder: true,
+        },
+      })
+
+      if (!skillDoc) {
+        return {
+          error: `Skill card "${skillType}" not found. Upload a file named "${skillName}.md" via Settings → Industry Knowledge.`,
+          suggestion: `Create a markdown file with guidance for ${skillType === 'reading' ? 'reading tracker columns and tabs' : skillType === 'benchmarks' ? 'performance benchmarks and metrics' : skillType === 'strategy' ? 'campaign planning and strategy' : 'legal compliance and contracts'}`,
+        }
+      }
+
+      return {
+        skillCard: skillDoc.content,
+        title: skillDoc.title,
+        folder: skillDoc.folder?.name || 'Unknown',
+        source: 'Industry Knowledge',
       }
     }
 

@@ -1,11 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { Settings, Slack, Key, Save, ExternalLink, CheckCircle, FileSpreadsheet } from 'lucide-react'
+import { Settings, Slack, Key, Save, ExternalLink, CheckCircle, FileSpreadsheet, Upload, X, BookOpen, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 export default function SettingsPage() {
   const [slackBotToken, setSlackBotToken] = useState('')
@@ -16,6 +16,13 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<string | null>(null)
+  const [skillCardStatus, setSkillCardStatus] = useState<any>(null)
 
   // Load existing settings
   useEffect(() => {
@@ -61,6 +68,133 @@ export default function SettingsPage() {
       console.error('Failed to save settings', e)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Upload industry knowledge file (assumes first brand exists - global knowledge)
+  const handleFileUpload = async (file: File) => {
+    const validTypes = ['application/pdf', 'text/plain', 'text/markdown', 'text/csv']
+    if (!validTypes.includes(file.type) && !file.name.endsWith('.md')) {
+      alert('Please upload a PDF, TXT, MD, or CSV file')
+      return
+    }
+
+    const sizeMB = file.size / (1024 * 1024)
+    if (sizeMB > 32) {
+      alert(`File too large (${sizeMB.toFixed(1)}MB). Maximum size is 32MB.`)
+      return
+    }
+
+    try {
+      setUploading(true)
+      setUploadStatus(`Uploading ${file.name}...`)
+
+      // Get first brand ID (or create a global knowledge store)
+      const brandsRes = await fetch('/api/brands')
+      if (!brandsRes.ok) throw new Error('Failed to fetch brands')
+      const brands = await brandsRes.json()
+
+      if (!brands || brands.length === 0) {
+        throw new Error('No brands found. Please create a brand first.')
+      }
+
+      const brandId = brands[0].id
+
+      const formData = new FormData()
+      formData.append('file', file)
+
+      setUploadStatus(`Extracting knowledge from ${file.name}...`)
+
+      const res = await fetch(`/api/brands/${brandId}/knowledge/upload`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Upload failed')
+      }
+
+      const data = await res.json()
+      setUploadStatus(`✓ Successfully uploaded! ${data.summary || ''}`)
+
+      setTimeout(() => setUploadStatus(null), 5000)
+    } catch (err: any) {
+      console.error('Upload failed:', err)
+      alert(`Upload failed: ${err.message}`)
+      setUploadStatus(null)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  // Handle drag and drop
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileUpload(e.dataTransfer.files[0])
+    }
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFileUpload(e.target.files[0])
+    }
+  }
+
+  // Load skill card status
+  const loadSkillCardStatus = async () => {
+    try {
+      const res = await fetch('/api/skills/sync')
+      if (res.ok) {
+        const data = await res.json()
+        setSkillCardStatus(data)
+      }
+    } catch (e) {
+      console.error('Failed to load skill card status', e)
+    }
+  }
+
+  // Load skill card status on mount
+  useEffect(() => {
+    loadSkillCardStatus()
+  }, [])
+
+  // Sync skill cards
+  const handleSyncSkillCards = async () => {
+    setSyncing(true)
+    setSyncStatus('Syncing skill cards from filesystem...')
+    try {
+      const res = await fetch('/api/skills/sync', {
+        method: 'POST',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSyncStatus('✓ Skill cards synced successfully!')
+        await loadSkillCardStatus()
+        setTimeout(() => setSyncStatus(null), 5000)
+      } else {
+        const data = await res.json()
+        throw new Error(data.error || 'Sync failed')
+      }
+    } catch (err: any) {
+      console.error('Skill card sync failed:', err)
+      setSyncStatus(`✗ Sync failed: ${err.message}`)
+      setTimeout(() => setSyncStatus(null), 5000)
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -252,6 +386,189 @@ export default function SettingsPage() {
                     Used for AI-powered brand summaries and Slack assistant
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* Industry Knowledge Upload */}
+            <div className="bg-white border border-stone-200 rounded-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <BookOpen className="h-5 w-5 text-stone-700" />
+                <h2 className="text-lg font-medium text-stone-900">Industry Knowledge</h2>
+              </div>
+              <p className="text-sm text-stone-600 mb-6">
+                Upload industry reports, best practices, and reference materials that Bloom can reference when answering questions.
+              </p>
+
+              {uploadStatus && (
+                <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-blue-700">
+                    {uploading && <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />}
+                    {uploadStatus}
+                  </div>
+                  {!uploading && (
+                    <button onClick={() => setUploadStatus(null)} className="text-blue-500 hover:text-blue-700">
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div
+                className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                  dragActive ? 'border-orange-500 bg-orange-50' : 'border-stone-300 bg-stone-50'
+                }`}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+              >
+                <Upload className="h-10 w-10 mx-auto text-stone-400 mb-3" />
+                <p className="text-sm text-stone-600 mb-2">
+                  Drag and drop your file here, or
+                </p>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white rounded-md text-sm font-medium"
+                >
+                  Browse Files
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.txt,.md,.csv"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <p className="text-xs text-stone-500 mt-4">
+                  Supported: PDF, TXT, Markdown (.md), CSV (max 32MB)
+                </p>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-md">
+                <p className="text-xs text-stone-600">
+                  💡 <strong>Tip:</strong> Upload skills documentation, influencer marketing guides,
+                  industry benchmarks, or any reference materials you want Bloom to learn from.
+                </p>
+              </div>
+            </div>
+
+            {/* Sync Skill Cards */}
+            <div className="bg-white border border-stone-200 rounded-lg p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <RefreshCw className="h-5 w-5 text-stone-700" />
+                <h2 className="text-lg font-medium text-stone-900">Sync Skill Cards</h2>
+                <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded font-medium">
+                  System Settings
+                </span>
+              </div>
+              <p className="text-sm text-stone-600 mb-6">
+                Skill cards are specialized knowledge files that teach Bloom how to read trackers,
+                evaluate performance, plan campaigns, and handle contracts. These files live in
+                <code className="px-1 py-0.5 bg-stone-100 rounded text-xs font-mono mx-1">/src/lib/skills/</code>
+                and are version-controlled.
+              </p>
+
+              {syncStatus && (
+                <div className={`mb-4 px-4 py-3 rounded-lg flex items-center justify-between ${
+                  syncStatus.startsWith('✓')
+                    ? 'bg-green-50 border border-green-200'
+                    : syncStatus.startsWith('✗')
+                    ? 'bg-red-50 border border-red-200'
+                    : 'bg-blue-50 border border-blue-200'
+                }`}>
+                  <div className={`flex items-center gap-2 text-sm ${
+                    syncStatus.startsWith('✓')
+                      ? 'text-green-700'
+                      : syncStatus.startsWith('✗')
+                      ? 'text-red-700'
+                      : 'text-blue-700'
+                  }`}>
+                    {syncing && <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />}
+                    {syncStatus}
+                  </div>
+                  {!syncing && (
+                    <button onClick={() => setSyncStatus(null)} className={
+                      syncStatus.startsWith('✓')
+                        ? 'text-green-500 hover:text-green-700'
+                        : syncStatus.startsWith('✗')
+                        ? 'text-red-500 hover:text-red-700'
+                        : 'text-blue-500 hover:text-blue-700'
+                    }>
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {skillCardStatus && (
+                <div className="mb-4 p-4 bg-stone-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-medium text-stone-900">Current Status</h3>
+                    <span className="text-xs text-stone-500">Expected: 4 cards per brand</span>
+                  </div>
+                  <div className="space-y-2">
+                    {skillCardStatus.brands && skillCardStatus.brands.map((brand: any) => (
+                      <div key={brand.brandId} className="flex items-center justify-between text-sm">
+                        <span className="text-stone-700">{brand.brandName}</span>
+                        <span className={`font-mono ${
+                          brand.skillCardsCount === skillCardStatus.expectedPerBrand
+                            ? 'text-green-600'
+                            : 'text-orange-600'
+                        }`}>
+                          {brand.skillCardsCount} / {skillCardStatus.expectedPerBrand}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-stone-900">Available Skill Cards:</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {[
+                    { name: 'Tracker Reading', file: 'skill_tracker_reading.md', desc: 'Column mappings, tab patterns' },
+                    { name: 'Performance Benchmarks', file: 'skill_performance_benchmarks.md', desc: 'Engagement rates, CPM/CPE' },
+                    { name: 'Campaign Strategy', file: 'skill_campaign_strategy.md', desc: 'Planning, creator selection' },
+                    { name: 'Legal Compliance', file: 'skill_legal_compliance.md', desc: 'FTC, contracts, usage rights' },
+                  ].map((skill) => (
+                    <div key={skill.file} className="p-3 bg-stone-50 rounded-md border border-stone-200">
+                      <div className="text-sm font-medium text-stone-900">{skill.name}</div>
+                      <div className="text-xs text-stone-500 mt-1 font-mono">{skill.file}</div>
+                      <div className="text-xs text-stone-600 mt-1">{skill.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <Button
+                  onClick={handleSyncSkillCards}
+                  disabled={syncing}
+                  variant="outline"
+                  className="w-full"
+                >
+                  {syncing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Sync Skill Cards from Filesystem
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="mt-4 p-3 bg-blue-50 rounded-md">
+                <p className="text-xs text-blue-900">
+                  <strong>💡 When to sync:</strong> After updating any <code className="px-1 py-0.5 bg-blue-100 rounded">.md</code> files
+                  in <code className="px-1 py-0.5 bg-blue-100 rounded">/src/lib/skills/</code>, click the sync button to update the database.
+                  This ensures Bloom uses the latest skill card content.
+                </p>
               </div>
             </div>
 
