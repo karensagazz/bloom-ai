@@ -255,8 +255,29 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
       return { headers: [], rows: [] }
     }
 
-    // First row is headers
-    const rawHeaders = rows[0]
+    // CRITICAL FIX: Detect if row 1 is a title row vs actual headers
+    // Many trackers have: Row 1 = Title, Row 2 = Headers, Row 3+ = Data
+    function isLikelyTitleRow(row: string[]): boolean {
+      // Title rows have very few non-empty cells (usually 1-3)
+      const nonEmptyCells = row.filter(cell => cell?.trim()).length
+
+      // Title patterns: "Campaign Tracker", "2026", "CONTRACTS", "SOW Review"
+      const titlePatterns = /tracker|campaign|contracts|sow|review|sheet|202[456]/i
+      const hasTitle = row.some(cell => titlePatterns.test(cell || ''))
+
+      // If <= 3 cells filled AND looks like title → it's a title row
+      return nonEmptyCells <= 3 && hasTitle
+    }
+
+    // Detect which row contains the actual headers
+    let headerRowIndex = 0
+    if (rows.length > 1 && isLikelyTitleRow(rows[0])) {
+      headerRowIndex = 1  // Use row 2 as headers
+      console.log('[Sheets] Title row detected at row 1, using headers from row 2')
+    }
+
+    const rawHeaders = rows[headerRowIndex]
+    console.log(`[Sheets] Using row ${headerRowIndex + 1} as headers (${rawHeaders.filter(h => h?.trim()).length} non-empty columns)`)
 
     // CRITICAL FIX: Preserve ALL columns, even if header is empty
     // Generate synthetic names for empty headers to avoid data loss
@@ -275,8 +296,8 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
       headers.length > 10 ? `... and ${headers.length - 10} more` : ''
     )
 
-    // Convert remaining rows to objects
-    const dataRows = rows.slice(1).map((row, index) => {
+    // Convert remaining rows to objects (skip title + header rows)
+    const dataRows = rows.slice(headerRowIndex + 1).map((row, index) => {
       const obj: Record<string, string> = {}
       // Use the normalized headers (never empty strings)
       headers.forEach((header, i) => {
