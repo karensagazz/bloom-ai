@@ -7,6 +7,26 @@ import { runSlackAgent } from '@/lib/slack-bot-agent'
 // Force dynamic - API routes should never be prerendered
 export const dynamic = 'force-dynamic'
 
+/**
+ * Formats confidence score with emoji indicator for Slack messages
+ * @param confidence - Score from 0-100
+ * @returns Formatted string with emoji and percentage
+ */
+function formatConfidence(confidence: number): string {
+  let emoji = '🔴'  // Red for low confidence
+  let label = 'Low confidence'
+
+  if (confidence >= 80) {
+    emoji = '🟢'  // Green for high confidence
+    label = 'High confidence'
+  } else if (confidence >= 60) {
+    emoji = '🟡'  // Yellow for medium confidence
+    label = 'Medium confidence'
+  }
+
+  return `\n\n_${emoji} ${label}: ${confidence}%_`
+}
+
 // GET handler - for browser/health check access
 export async function GET() {
   return NextResponse.json({
@@ -252,16 +272,18 @@ async function handleMention(event: any) {
 
     console.log(`[Slack Bot] Agent complete (${Date.now() - agentStartTime}ms)`)
 
-    // Post response in thread with mrkdwn formatting
+    // Post response in thread with mrkdwn formatting and confidence indicator
+    const answerWithConfidence = result.answer + formatConfidence(result.confidence)
+
     await client.chat.postMessage({
       channel: channelId,
-      text: result.answer, // Fallback for notifications
+      text: answerWithConfidence, // Fallback for notifications
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: result.answer,
+            text: answerWithConfidence,
           },
         },
       ],
@@ -273,15 +295,18 @@ async function handleMention(event: any) {
     console.error(`[Slack Bot] ===== ERROR after ${Date.now() - startTime}ms =====`)
     console.error('[Slack Bot] Error:', error)
 
+    const errorMessage = "Sorry, I ran into an issue with that question. Try asking again, or check if your campaign trackers are synced."
+    const errorWithConfidence = errorMessage + formatConfidence(0)
+
     await client.chat.postMessage({
       channel: channelId,
-      text: "Sorry, I ran into an issue with that question. Try asking again, or check if your campaign trackers are synced.",
+      text: errorWithConfidence,
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: "Sorry, I ran into an issue with that question. Try asking again, or check if your campaign trackers are synced.",
+            text: errorWithConfidence,
           },
         },
       ],
@@ -345,21 +370,25 @@ async function handleDirectMessage(event: any) {
         channelHistory: dmHistory,
       })
 
+      const answerWithConfidence = result.answer + formatConfidence(result.confidence)
+
       await client.chat.postMessage({
         channel: channelId,
-        text: result.answer,
+        text: answerWithConfidence,
         blocks: [
           {
             type: 'section',
-            text: { type: 'mrkdwn', text: result.answer },
+            text: { type: 'mrkdwn', text: answerWithConfidence },
           },
         ],
       })
     } catch (error) {
       console.error('[Slack Bot] DM processing error:', error)
+      const dmErrorMessage = "Sorry, I ran into an issue. Try again or @mention me in a channel."
+      const dmErrorWithConfidence = dmErrorMessage + formatConfidence(0)
       await client.chat.postMessage({
         channel: channelId,
-        text: "Sorry, I ran into an issue. Try again or @mention me in a channel.",
+        text: dmErrorWithConfidence,
       })
     }
     return
