@@ -82,9 +82,14 @@ RESPONSE FORMAT:
 4. End with a confidence note based on data quality
 
 CRITICAL WORKFLOW RULES:
-- ALWAYS call at least one data tool (get_campaigns, search_influencers, etc.) before answering any question about creators, campaigns, deals, or brand data. Never answer from memory alone.
+- ALWAYS search MULTIPLE data sources before giving up. For any question about creators, campaigns, or deals:
+  1. First call get_campaigns and/or search_influencers
+  2. ALSO call search_knowledge_documents — the Knowledge Base often has rich context (performance notes, contract details, strategy insights) that campaign records don't capture
+  3. If campaign/influencer search returns 0 results, try broader searches: remove filters, search by partial name, or get ALL campaigns and scan rawData
+  4. NEVER say "no records found" after checking only one data source — you must check at least campaigns, influencers, AND knowledge documents
 - ALWAYS call submit_final_answer as your LAST action to submit your response. Never end with a plain text message — submit_final_answer IS your response.
 - When you call submit_final_answer, be honest in the confidence field: base it on how many fields were actually populated (not blank) in the tool results you received.
+- When a name search returns 0 results, the name might be stored differently (e.g. "Helen L." vs "Helen Leland", handle vs real name). Try partial name matches and check rawData.
 
 SLACK FORMATTING:
 - Use *bold* for creator names, metrics, and key data points
@@ -139,14 +144,18 @@ When answering questions, consider:
 
 Use brand data first, but apply influencer marketing expertise to interpret it.
 
-KNOWLEDGE PRIORITY:
+DATA PRIORITY (follow this order for EVERY question):
 
-When answering, prioritize sources in this order:
-1. Internal campaign trackers
-2. Creator performance databases
-3. Campaign briefs or documentation
-4. Historical campaign notes
-5. Influencer marketing industry best practices
+1. CAMPAIGN TRACKER DATA (highest priority): Always call get_campaigns and search_influencers FIRST. This is the synced Google Sheets data — the source of truth for creator names, deal values, deliverables, statuses, platforms, and all campaign details. Also check rawData when structured fields are blank.
+2. UPLOADED FILES & KNOWLEDGE BASE: Always call search_knowledge_documents. This searches uploaded brand briefs, performance insights, influencer notes, campaign insights, and auto-generated learnings. This is where rich qualitative context lives (notes about creators, strategic insights, contract details).
+3. LEARNINGS & STRATEGIC INTELLIGENCE: Brand learnings, trend analyses, and strategic recommendations live in the Knowledge Base too. These give you the "why" behind the data.
+
+MANDATORY: For ANY question about a creator, campaign, deal, or brand, you MUST call ALL THREE:
+- get_campaigns (or search_influencers) for structured tracker data
+- search_knowledge_documents for uploaded docs + notes + insights
+- get_tracker_info for sync freshness
+
+Only after checking all sources can you answer or say "no data found."
 
 If internal data conflicts with industry norms, trust internal data.
 
@@ -160,13 +169,15 @@ Never fabricate:
 
 If data is missing, say so clearly and suggest what should be synced or checked.
 
-SKILL CARDS:
+SKILL CARDS (ALWAYS ACTIVE — apply to EVERY answer):
 
-You have 4 skill cards available. Load the relevant one(s) based on the task:
-- skill_tracker_reading: When a spreadsheet, Airtable export, or Google Sheet is uploaded/discussed
-- skill_performance_benchmarks: When asked to evaluate, rank, or analyze creator/campaign performance
-- skill_campaign_strategy: When asked to plan, review, or advise on a campaign
-- skill_legal_compliance: When asked about contracts, SOW, rates, FTC disclosures, or usage rights
+You have 4 skill cards that are ALWAYS loaded into your context. You MUST apply the relevant skill(s) to every response:
+- TRACKER READING: ALWAYS apply when interpreting campaign data, creator records, or any synced tracker content. This skill defines how to read columns, handle blanks, and interpret raw data.
+- PERFORMANCE BENCHMARKS: ALWAYS apply when discussing metrics, engagement rates, deal values, or comparing creators. Never give a number without context from this skill.
+- CAMPAIGN STRATEGY: Apply when advising on campaigns, briefs, creator selection, or planning.
+- LEGAL COMPLIANCE: Apply when discussing contracts, SOWs, rates, FTC rules, or usage rights.
+
+You do NOT need to call get_skill_card — the skills are already injected into this prompt. Just apply them.
 
 HOW TO PROCESS A SPREADSHEET:
 
@@ -324,7 +335,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: 'search_knowledge_documents',
-    description: 'Search uploaded industry knowledge documents, brand briefs, and other reference materials. Use this to find best practices, strategy guidance, or background context.',
+    description: 'IMPORTANT: Search the Knowledge Base for documents, influencer notes, campaign insights, and brand learnings. This searches across ALL knowledge sources — not just uploaded docs. ALWAYS call this alongside get_campaigns/search_influencers for any creator or campaign question. It often has rich context that campaign records lack.',
     input_schema: {
       type: 'object',
       properties: {
@@ -388,6 +399,49 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
         take: 10,
       })
 
+      // FALLBACK: If no influencers found in BrandInfluencer, search CampaignRecord for the name
+      let campaignMatches: any[] = []
+      if (influencers.length === 0 && query) {
+        console.log(`[Slack Agent] No influencers found for "${query}" in BrandInfluencer, searching CampaignRecord...`)
+        const searchTerms = query.toLowerCase().split(/\s+/)
+
+        // Search structured influencerName field
+        const campaignRecords = await prisma.campaignRecord.findMany({
+          where: {
+            brandId,
+            influencerName: { contains: query, mode: 'insensitive' },
+          },
+          take: 20,
+        })
+
+        // Also search rawData if structured search fails
+        if (campaignRecords.length === 0) {
+          const allRecords = await prisma.campaignRecord.findMany({
+            where: { brandId },
+            take: 500,
+          })
+          const rawMatches = allRecords.filter(c => {
+            if (c.rawData) {
+              try {
+                const raw = typeof c.rawData === 'string' ? JSON.parse(c.rawData) : c.rawData
+                const allValues = Object.values(raw as Record<string, any>).map(v => String(v || '').toLowerCase())
+                const fullText = allValues.join(' ')
+                return searchTerms.every(term => fullText.includes(term)) ||
+                  searchTerms.some(term => fullText.includes(term) && term.length >= 3)
+              } catch { return false }
+            }
+            return false
+          })
+          campaignMatches = rawMatches.slice(0, 10)
+        } else {
+          campaignMatches = campaignRecords.slice(0, 10)
+        }
+
+        if (campaignMatches.length > 0) {
+          console.log(`[Slack Agent] Found ${campaignMatches.length} campaign records matching "${query}" via fallback`)
+        }
+      }
+
       return {
         count: influencers.length,
         influencers: influencers.map(i => ({
@@ -403,6 +457,21 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           engagementRate: i.engagementRate,
           followerCount: i.followerCount,
         })),
+        // Include campaign record matches if BrandInfluencer had no results
+        ...(campaignMatches.length > 0 ? {
+          note: `No dedicated influencer profile found, but found ${campaignMatches.length} campaign records matching "${query}". Data from campaign records:`,
+          campaignRecordMatches: campaignMatches.map(c => ({
+            influencerName: c.influencerName,
+            campaignName: c.campaignName,
+            platform: c.platform,
+            dealValue: c.dealValue,
+            status: c.status,
+            contentType: c.contentType,
+            rawData: c.rawData ? (() => { try { return JSON.parse(c.rawData!) } catch { return c.rawData } })() : null,
+          })),
+        } : influencers.length === 0 ? {
+          note: `No results found for "${query}" in influencer profiles or campaign records. Try search_knowledge_documents to check the Knowledge Base, or get_campaigns without a name filter to browse all records.`,
+        } : {}),
       }
     }
 
@@ -415,15 +484,54 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
       if (status) where.status = { contains: status, mode: 'insensitive' }
       if (influencerName) where.influencerName = { contains: influencerName, mode: 'insensitive' }
 
-      const campaigns = await prisma.campaignRecord.findMany({
+      let campaigns = await prisma.campaignRecord.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: limit,
       })
 
+      // FALLBACK: If filtering by influencerName returned 0 results, search rawData for the name
+      if (campaigns.length === 0 && influencerName) {
+        console.log(`[Slack Agent] No campaigns found for "${influencerName}" in structured fields, searching rawData...`)
+        const allCampaigns = await prisma.campaignRecord.findMany({
+          where: { brandId, ...(year ? { year } : {}) },
+          orderBy: { createdAt: 'desc' },
+          take: 500,
+        })
+
+        // Search through rawData for the influencer name (case-insensitive, partial match)
+        const searchTerms = influencerName.toLowerCase().split(/\s+/)
+        campaigns = allCampaigns.filter(c => {
+          // Check structured influencerName with partial match
+          if (c.influencerName) {
+            const name = c.influencerName.toLowerCase()
+            if (searchTerms.every(term => name.includes(term))) return true
+            // Also match if any single search term is a close match (e.g. "Helen" matches "Helen L.")
+            if (searchTerms.some(term => name.includes(term) && term.length >= 3)) return true
+          }
+          // Check rawData for the name in any field value
+          if (c.rawData) {
+            try {
+              const raw = typeof c.rawData === 'string' ? JSON.parse(c.rawData) : c.rawData
+              const allValues = Object.values(raw as Record<string, any>).map(v => String(v || '').toLowerCase())
+              const fullText = allValues.join(' ')
+              if (searchTerms.every(term => fullText.includes(term))) return true
+              if (searchTerms.some(term => fullText.includes(term) && term.length >= 3)) return true
+            } catch { /* ignore parse errors */ }
+          }
+          return false
+        }).slice(0, limit)
+
+        if (campaigns.length > 0) {
+          console.log(`[Slack Agent] rawData fallback found ${campaigns.length} campaigns for "${influencerName}"`)
+        }
+      }
+
       return {
         count: campaigns.length,
-        note: 'When structured fields (platform, dealValue, status, etc.) are blank, check rawData — it contains the original spreadsheet row and may have the actual values under different column names.',
+        note: campaigns.length === 0 && influencerName
+          ? `No campaigns found for "${influencerName}" in structured fields OR rawData. The name might be stored differently. Try searching knowledge_documents or getting all campaigns without a name filter to browse.`
+          : 'When structured fields (platform, dealValue, status, etc.) are blank, check rawData — it contains the original spreadsheet row and may have the actual values under different column names.',
         campaigns: campaigns.map(c => ({
           influencerName: c.influencerName,
           campaignName: c.campaignName,
@@ -616,16 +724,59 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
         take: 5,
       })
 
-      if (documents.length === 0) {
+      // ALSO search related data models for richer context
+      const [influencerNotes, campaignInsights, brandLearnings] = await Promise.all([
+        prisma.influencerNote.findMany({
+          where: {
+            brandId,
+            OR: [
+              { content: { contains: query, mode: 'insensitive' } },
+              { noteType: { contains: query, mode: 'insensitive' } },
+              { influencer: { name: { contains: query, mode: 'insensitive' } } },
+            ],
+          },
+          include: { influencer: { select: { name: true } } },
+          take: 10,
+        }).catch(() => []),
+        prisma.campaignInsight.findMany({
+          where: {
+            brandId,
+            OR: [
+              { title: { contains: query, mode: 'insensitive' } },
+              { description: { contains: query, mode: 'insensitive' } },
+              { category: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          take: 5,
+        }).catch(() => []),
+        prisma.brandLearning.findMany({
+          where: {
+            brandId,
+            OR: [
+              { title: { contains: query, mode: 'insensitive' } },
+              { description: { contains: query, mode: 'insensitive' } },
+              { recommendation: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          take: 5,
+        }).catch(() => []),
+      ])
+
+      const totalResults = documents.length + influencerNotes.length + campaignInsights.length + brandLearnings.length
+
+      if (totalResults === 0) {
         return {
           count: 0,
-          message: `No knowledge documents found matching "${query}". Consider uploading relevant industry knowledge or brand documentation.`,
+          message: `No knowledge documents, influencer notes, insights, or learnings found matching "${query}". The data might be stored under a different name or may need to be re-synced.`,
           documents: [],
+          influencerNotes: [],
+          campaignInsights: [],
+          brandLearnings: [],
         }
       }
 
       return {
-        count: documents.length,
+        count: totalResults,
         documents: documents.map(doc => ({
           title: doc.title,
           folder: doc.folder?.name || 'Unknown',
@@ -634,7 +785,25 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           tags: doc.tags,
           isIndustryKnowledge: doc.folder?.name === 'Industry Knowledge',
         })),
-        source: 'Knowledge Base',
+        influencerNotes: influencerNotes.map((n: any) => ({
+          influencerName: n.influencer?.name || 'Unknown',
+          content: n.content,
+          noteType: n.noteType,
+          sentiment: n.sentiment,
+        })),
+        campaignInsights: campaignInsights.map((i: any) => ({
+          title: i.title,
+          description: i.description,
+          category: i.category,
+          sentiment: i.sentiment,
+        })),
+        brandLearnings: brandLearnings.map((l: any) => ({
+          title: l.title,
+          description: l.description,
+          recommendation: l.recommendation,
+          category: l.category,
+        })),
+        source: 'Knowledge Base + Related Data',
       }
     }
 
