@@ -25,7 +25,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string
 export async function getCheapStructuredCompletion(
   systemPrompt: string,
   userPrompt: string,
-  maxTokens: number = 4000
+  maxTokens: number = 8192
 ): Promise<string> {
   try {
     const response = await withTimeout(

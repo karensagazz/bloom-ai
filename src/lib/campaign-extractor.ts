@@ -86,22 +86,16 @@ function isInternalTeamMember(name: string | null | undefined): boolean {
   )
 }
 
-// Extract campaign records from spreadsheet tab data using AI
-export async function extractCampaignRecords(
+// Process a single batch of rows through AI extraction
+async function extractCampaignBatch(
   brandName: string,
   tabName: string,
   headers: string[],
-  rows: Record<string, string>[],
+  batchRows: Record<string, string>[],
+  batchIndex: number,
+  totalRows: number,
   year?: number
 ): Promise<ExtractedCampaignRecord[]> {
-  // Skip tabs with no data
-  if (rows.length === 0 || headers.length === 0) {
-    return []
-  }
-
-  // Sample rows to control token usage (max 100 rows)
-  const sampleRows = rows.slice(0, 100)
-  const hasMore = rows.length > 100
 
   const systemPrompt = `You are a data extraction assistant that analyzes influencer marketing campaign tracker spreadsheets.
 Your job is to identify which columns contain relevant campaign data and extract structured records.
@@ -115,8 +109,8 @@ ${year ? `Year: ${year}` : ''}
 
 Column headers: ${JSON.stringify(headers)}
 
-Data rows (${sampleRows.length} of ${rows.length} total${hasMore ? ' - showing sample' : ''}):
-${JSON.stringify(sampleRows, null, 2)}
+Data rows (batch ${batchIndex + 1}, ${batchRows.length} rows of ${totalRows} total):
+${JSON.stringify(batchRows, null, 2)}
 
 COLUMN MAPPING RULES:
 - SKIP these columns if present: "Owner" (campaign manager/internal field only)
@@ -170,37 +164,48 @@ Return a JSON array with this structure:
 If no campaign data found, return: []`
 
   // LOG: What we're sending to AI
-  console.log(`[Campaign Extract] Tab: "${tabName}" | Headers: ${headers.length} | Rows: ${rows.length}`)
-  console.log(`[Campaign Extract] Sample headers:`, headers.slice(0, 5))
+  console.log(`[Campaign Extract] Tab: "${tabName}" batch ${batchIndex + 1} | Headers: ${headers.length} | Batch rows: ${batchRows.length}`)
 
   try {
     const response = await getCheapStructuredCompletion(systemPrompt, userPrompt)
     const parsed = parseJSONResponse(response)
 
     if (!Array.isArray(parsed)) {
-      console.log(`❌ Tab "${tabName}" did not return an array, skipping`)
+      console.log(`❌ Tab "${tabName}" batch ${batchIndex + 1} did not return an array, skipping`)
       return []
     }
 
     // LOG: What AI returned
     if (parsed.length === 0) {
-      console.log(`⚠️  Tab "${tabName}": AI returned 0 records (likely not campaign data)`)
-      console.log(`   Headers were:`, headers.join(', '))
+      console.log(`⚠️  Tab "${tabName}" batch ${batchIndex + 1}: AI returned 0 records`)
     } else {
-      console.log(`✅ Tab "${tabName}": Extracted ${parsed.length} campaign records`)
+      console.log(`✅ Tab "${tabName}" batch ${batchIndex + 1}: Extracted ${parsed.length} campaign records`)
     }
 
-    // Map back to include raw data reference and filter internal team members
-    const mapped = parsed.map((record: any, index: number) => ({
-      influencerName: record.influencerName || undefined,
-      campaignName: record.campaignName || undefined,
-      platform: record.platform || undefined,
-      contentType: record.contentType || undefined,
-      dealValue: record.dealValue || undefined,
-      status: record.status || undefined,
-      quarter: record.quarter || undefined,
-      rawData: sampleRows[index] || undefined,
-    }))
+    // Map back to include raw data — try to match by influencerName for accuracy
+    const mapped = parsed.map((record: any, index: number) => {
+      // Try to find the matching raw row by influencer name
+      let rawRow = batchRows[index]  // default: positional match
+      if (record.influencerName) {
+        const nameMatch = batchRows.find(r => {
+          const vals = Object.values(r)
+          return vals.some(v => v && String(v).toLowerCase().trim() === record.influencerName.toLowerCase().trim())
+        })
+        if (nameMatch) rawRow = nameMatch
+      }
+
+      return {
+        influencerName: record.influencerName || undefined,
+        handle: record.handle || undefined,
+        campaignName: record.campaignName || undefined,
+        platform: record.platform || undefined,
+        contentType: record.contentType || undefined,
+        dealValue: record.dealValue || undefined,
+        status: record.status || undefined,
+        quarter: record.quarter || undefined,
+        rawData: rawRow || undefined,
+      }
+    })
 
     // Filter out internal team members
     const filtered = mapped.filter(record => {
@@ -217,29 +222,64 @@ If no campaign data found, return: []`
 
     return filtered
   } catch (error) {
-    console.error(`Failed to extract records from tab "${tabName}":`, error)
+    console.error(`Failed to extract records from tab "${tabName}" batch ${batchIndex + 1}:`, error)
     return []
   }
 }
 
-// Extract SOW (Statement of Work) records from spreadsheet tab data using AI
-export async function extractSOWRecords(
+// Extract campaign records from spreadsheet tab data using AI
+// Processes rows in batches to avoid token limit truncation
+const EXTRACTION_BATCH_SIZE = 40
+
+export async function extractCampaignRecords(
   brandName: string,
   tabName: string,
   headers: string[],
   rows: Record<string, string>[],
-  year?: number,
-  platformFromTab?: string
-): Promise<ExtractedSOWRecord[]> {
+  year?: number
+): Promise<ExtractedCampaignRecord[]> {
   // Skip tabs with no data
   if (rows.length === 0 || headers.length === 0) {
     return []
   }
 
-  // Sample rows to control token usage (max 100 rows)
-  const sampleRows = rows.slice(0, 100)
-  const hasMore = rows.length > 100
+  console.log(`[Campaign Extract] Tab: "${tabName}" | ${rows.length} total rows | processing in batches of ${EXTRACTION_BATCH_SIZE}`)
 
+  const allRecords: ExtractedCampaignRecord[] = []
+
+  // Process rows in batches to stay within AI token limits
+  for (let i = 0; i < rows.length; i += EXTRACTION_BATCH_SIZE) {
+    const batchRows = rows.slice(i, i + EXTRACTION_BATCH_SIZE)
+    const batchIndex = Math.floor(i / EXTRACTION_BATCH_SIZE)
+
+    const batchRecords = await extractCampaignBatch(
+      brandName,
+      tabName,
+      headers,
+      batchRows,
+      batchIndex,
+      rows.length,
+      year
+    )
+
+    allRecords.push(...batchRecords)
+  }
+
+  console.log(`[Campaign Extract] Tab "${tabName}" total: ${allRecords.length} records from ${rows.length} rows`)
+  return allRecords
+}
+
+// Process a single batch of SOW rows through AI extraction
+async function extractSOWBatch(
+  brandName: string,
+  tabName: string,
+  headers: string[],
+  batchRows: Record<string, string>[],
+  batchIndex: number,
+  totalRows: number,
+  year?: number,
+  platformFromTab?: string
+): Promise<ExtractedSOWRecord[]> {
   const systemPrompt = `You are a data extraction assistant specializing in influencer marketing contracts and SOW (Statement of Work) documents.
 Your job is to identify contract/deal information and extract structured records.
 You must respond with ONLY valid JSON - no explanations or markdown.`
@@ -252,8 +292,8 @@ ${platformFromTab ? `Primary Platform: ${platformFromTab}` : ''}
 
 Column headers: ${JSON.stringify(headers)}
 
-Data rows (${sampleRows.length} of ${rows.length} total${hasMore ? ' - showing sample' : ''}):
-${JSON.stringify(sampleRows, null, 2)}
+Data rows (batch ${batchIndex + 1}, ${batchRows.length} rows of ${totalRows} total):
+${JSON.stringify(batchRows, null, 2)}
 
 TASK: Extract each row as a structured SOW/contract record. Look for columns that map to:
 
@@ -312,43 +352,50 @@ Return a JSON array:
 
 If no SOW/contract data found, return: []`
 
-  // LOG: What we're sending to AI
-  console.log(`[SOW Extract] Tab: "${tabName}" | Headers: ${headers.length} | Rows: ${rows.length}`)
-  console.log(`[SOW Extract] Sample headers:`, headers.slice(0, 5))
+  console.log(`[SOW Extract] Tab: "${tabName}" batch ${batchIndex + 1} | Batch rows: ${batchRows.length}`)
 
   try {
     const response = await getCheapStructuredCompletion(systemPrompt, userPrompt)
     const parsed = parseJSONResponse(response)
 
     if (!Array.isArray(parsed)) {
-      console.log(`❌ SOW tab "${tabName}" did not return an array, skipping`)
+      console.log(`❌ SOW tab "${tabName}" batch ${batchIndex + 1} did not return an array, skipping`)
       return []
     }
 
-    // LOG: What AI returned
     if (parsed.length === 0) {
-      console.log(`⚠️  SOW tab "${tabName}": AI returned 0 records (likely not SOW/contract data)`)
-      console.log(`   Headers were:`, headers.join(', '))
+      console.log(`⚠️  SOW tab "${tabName}" batch ${batchIndex + 1}: AI returned 0 records`)
     } else {
-      console.log(`✅ SOW tab "${tabName}": Extracted ${parsed.length} SOW records`)
+      console.log(`✅ SOW tab "${tabName}" batch ${batchIndex + 1}: Extracted ${parsed.length} SOW records`)
     }
 
-    // Map back to include raw data reference and filter internal team members
-    const mapped = parsed.map((record: any, index: number) => ({
-      influencerName: record.influencerName || undefined,
-      campaignName: record.campaignName || undefined,
-      platform: record.platform || undefined,
-      contractType: record.contractType || undefined,
-      dealValue: record.dealValue || undefined,
-      deliverables: record.deliverables || undefined,
-      paymentTerms: record.paymentTerms || undefined,
-      usageRights: record.usageRights || undefined,
-      exclusivity: record.exclusivity || undefined,
-      startDate: record.startDate || undefined,
-      endDate: record.endDate || undefined,
-      status: record.status || undefined,
-      rawData: sampleRows[index] || undefined,
-    }))
+    // Map back with rawData — match by influencer name for accuracy
+    const mapped = parsed.map((record: any, index: number) => {
+      let rawRow = batchRows[index]
+      if (record.influencerName) {
+        const nameMatch = batchRows.find(r => {
+          const vals = Object.values(r)
+          return vals.some(v => v && String(v).toLowerCase().trim() === record.influencerName.toLowerCase().trim())
+        })
+        if (nameMatch) rawRow = nameMatch
+      }
+
+      return {
+        influencerName: record.influencerName || undefined,
+        campaignName: record.campaignName || undefined,
+        platform: record.platform || undefined,
+        contractType: record.contractType || undefined,
+        dealValue: record.dealValue || undefined,
+        deliverables: record.deliverables || undefined,
+        paymentTerms: record.paymentTerms || undefined,
+        usageRights: record.usageRights || undefined,
+        exclusivity: record.exclusivity || undefined,
+        startDate: record.startDate || undefined,
+        endDate: record.endDate || undefined,
+        status: record.status || undefined,
+        rawData: rawRow || undefined,
+      }
+    })
 
     // Filter out internal team members
     const filtered = mapped.filter(record => {
@@ -365,9 +412,49 @@ If no SOW/contract data found, return: []`
 
     return filtered
   } catch (error) {
-    console.error(`Failed to extract SOW records from tab "${tabName}":`, error)
+    console.error(`Failed to extract SOW records from tab "${tabName}" batch ${batchIndex + 1}:`, error)
     return []
   }
+}
+
+// Extract SOW records from spreadsheet tab data using AI
+// Processes rows in batches to avoid token limit truncation
+export async function extractSOWRecords(
+  brandName: string,
+  tabName: string,
+  headers: string[],
+  rows: Record<string, string>[],
+  year?: number,
+  platformFromTab?: string
+): Promise<ExtractedSOWRecord[]> {
+  if (rows.length === 0 || headers.length === 0) {
+    return []
+  }
+
+  console.log(`[SOW Extract] Tab: "${tabName}" | ${rows.length} total rows | processing in batches of ${EXTRACTION_BATCH_SIZE}`)
+
+  const allRecords: ExtractedSOWRecord[] = []
+
+  for (let i = 0; i < rows.length; i += EXTRACTION_BATCH_SIZE) {
+    const batchRows = rows.slice(i, i + EXTRACTION_BATCH_SIZE)
+    const batchIndex = Math.floor(i / EXTRACTION_BATCH_SIZE)
+
+    const batchRecords = await extractSOWBatch(
+      brandName,
+      tabName,
+      headers,
+      batchRows,
+      batchIndex,
+      rows.length,
+      year,
+      platformFromTab
+    )
+
+    allRecords.push(...batchRecords)
+  }
+
+  console.log(`[SOW Extract] Tab "${tabName}" total: ${allRecords.length} records from ${rows.length} rows`)
+  return allRecords
 }
 
 // Build/update the influencer roster for a brand from SOW Review tab data
