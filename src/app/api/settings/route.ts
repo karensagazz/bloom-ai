@@ -63,10 +63,14 @@ export async function POST(request: Request) {
     // Upsert settings
     const settings = await prisma.settings.upsert({
       where: { id: 'default' },
-      update: updateData,
+      update: {
+        ...updateData,
+        updatedAt: new Date(),
+      },
       create: {
         id: 'default',
         ...updateData,
+        updatedAt: new Date(),
       },
     })
 
