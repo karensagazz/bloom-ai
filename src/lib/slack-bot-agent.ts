@@ -53,8 +53,8 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
-// Timeout for AI API calls (prevents indefinite hangs in Slack bot)
-const SLACK_AI_TIMEOUT_MS = 45000  // 45 seconds max per AI call
+// Timeout for AI API calls — generous to allow deep multi-tool analysis
+const SLACK_AI_TIMEOUT_MS = 90000  // 90 seconds max per AI call
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
   const timeout = new Promise<never>((_, reject) =>
@@ -918,7 +918,7 @@ export async function runSlackAgent(options: {
   let response = await withTimeout(
     anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 16384,
       system: systemPrompt,
       tools,
       messages,
@@ -930,7 +930,7 @@ export async function runSlackAgent(options: {
 
   // Agent loop - process tool calls until we get a final response
   let iterationCount = 0
-  const maxIterations = 10
+  const maxIterations = 15
   let lastTrackerInfo: any = null
 
   // Data quality tracking — populated vs blank fields across all get_campaigns results
@@ -1036,7 +1036,7 @@ export async function runSlackAgent(options: {
     response = await withTimeout(
       anthropic.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        max_tokens: 16384,
         system: systemPrompt,
         tools,
         messages,
