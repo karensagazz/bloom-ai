@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { WebClient } from '@slack/web-api'
 import { prisma } from '@/lib/db'
 
+// Force dynamic - API routes should never be prerendered
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const checks: Record<string, any> = {}
 
