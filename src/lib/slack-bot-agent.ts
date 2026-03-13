@@ -1,5 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from './db'
+import * as fs from 'fs'
+import * as path from 'path'
+
+// Load tracker reading skill card from filesystem at startup
+// This is injected into every prompt so the bot always follows it
+function loadTrackerSkillCard(): string {
+  try {
+    const skillPath = path.join(process.cwd(), 'src', 'lib', 'skills', 'skill_tracker_reading.md')
+    return fs.readFileSync(skillPath, 'utf-8')
+  } catch {
+    console.warn('[Slack Agent] Could not load tracker skill card from filesystem')
+    return ''
+  }
+}
+
+const TRACKER_SKILL_CARD = loadTrackerSkillCard()
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -681,7 +697,11 @@ export async function runSlackAgent(options: {
   )
   console.log('[Slack Agent] Brand fetched:', brand?.name)
 
-  const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}`
+  const trackerGuidance = TRACKER_SKILL_CARD
+    ? `\n\n---\n## MANDATORY TRACKER READING RULES\n\nThe following rules MUST be followed for every answer involving campaign data. These override any defaults:\n\n${TRACKER_SKILL_CARD}`
+    : ''
+
+  const systemPrompt = `${BOT_SYSTEM_PROMPT}\n\nYou are currently helping with questions about the brand: ${brand?.name || 'Unknown Brand'}\nBrand ID: ${brandId}${trackerGuidance}`
 
   console.log('[Slack Agent] Calling Claude API (initial)...')
   let response = await withTimeout(
