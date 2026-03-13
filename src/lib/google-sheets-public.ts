@@ -346,10 +346,10 @@ export async function fetchPublicSheet(spreadsheetId: string, gid: string = '0')
 export async function fetchAllTabs(
   spreadsheetId: string,
   tabs: TabInfo[]
-): Promise<Array<TabInfo & { headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string> }> }>> {
+): Promise<Array<TabInfo & { headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string | number> }> }>> {
   // Limit concurrent requests to avoid rate limiting
   const CONCURRENT_LIMIT = 5
-  const results: Array<TabInfo & { headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string> }> }> = []
+  const results: Array<TabInfo & { headers: string[]; rows: Array<{ rowIndex: number; data: Record<string, string | number> }> }> = []
 
   // Process in batches
   for (let i = 0; i < tabs.length; i += CONCURRENT_LIMIT) {
