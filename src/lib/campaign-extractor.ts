@@ -229,7 +229,13 @@ If no campaign data found, return: []`
 
 // Extract campaign records from spreadsheet tab data using AI
 // Processes rows in batches to avoid token limit truncation
-const EXTRACTION_BATCH_SIZE = 40
+// Haiku handles 80 rows per call cleanly and is ~5x faster than Sonnet
+const EXTRACTION_BATCH_SIZE = 80
+
+// Max rows to extract per tab — prevents huge tabs (e.g. Ad Repository, 500+ rows)
+// from dominating sync time. First MAX_ROWS rows are processed; the rest are
+// still stored as rawData and remain readable by the bot via get_raw_tracker_data.
+const MAX_ROWS_PER_TAB = 200
 
 export async function extractCampaignRecords(
   brandName: string,
@@ -243,13 +249,19 @@ export async function extractCampaignRecords(
     return []
   }
 
-  console.log(`[Campaign Extract] Tab: "${tabName}" | ${rows.length} total rows | processing in batches of ${EXTRACTION_BATCH_SIZE}`)
+  // Cap rows to prevent huge tabs from dominating sync time.
+  // Raw data for all rows is still stored in TrackerTab and readable by the bot.
+  const processRows = rows.length > MAX_ROWS_PER_TAB
+    ? (() => { console.log(`[Campaign Extract] Tab "${tabName}": capping at ${MAX_ROWS_PER_TAB} rows (${rows.length} total)`); return rows.slice(0, MAX_ROWS_PER_TAB) })()
+    : rows
+
+  console.log(`[Campaign Extract] Tab: "${tabName}" | ${processRows.length} rows | batches of ${EXTRACTION_BATCH_SIZE}`)
 
   const allRecords: ExtractedCampaignRecord[] = []
 
   // Process rows in batches to stay within AI token limits
-  for (let i = 0; i < rows.length; i += EXTRACTION_BATCH_SIZE) {
-    const batchRows = rows.slice(i, i + EXTRACTION_BATCH_SIZE)
+  for (let i = 0; i < processRows.length; i += EXTRACTION_BATCH_SIZE) {
+    const batchRows = processRows.slice(i, i + EXTRACTION_BATCH_SIZE)
     const batchIndex = Math.floor(i / EXTRACTION_BATCH_SIZE)
 
     const batchRecords = await extractCampaignBatch(
@@ -258,7 +270,7 @@ export async function extractCampaignRecords(
       headers,
       batchRows,
       batchIndex,
-      rows.length,
+      processRows.length,
       year
     )
 
@@ -431,12 +443,16 @@ export async function extractSOWRecords(
     return []
   }
 
-  console.log(`[SOW Extract] Tab: "${tabName}" | ${rows.length} total rows | processing in batches of ${EXTRACTION_BATCH_SIZE}`)
+  const processRows = rows.length > MAX_ROWS_PER_TAB
+    ? (() => { console.log(`[SOW Extract] Tab "${tabName}": capping at ${MAX_ROWS_PER_TAB} rows (${rows.length} total)`); return rows.slice(0, MAX_ROWS_PER_TAB) })()
+    : rows
+
+  console.log(`[SOW Extract] Tab: "${tabName}" | ${processRows.length} rows | batches of ${EXTRACTION_BATCH_SIZE}`)
 
   const allRecords: ExtractedSOWRecord[] = []
 
-  for (let i = 0; i < rows.length; i += EXTRACTION_BATCH_SIZE) {
-    const batchRows = rows.slice(i, i + EXTRACTION_BATCH_SIZE)
+  for (let i = 0; i < processRows.length; i += EXTRACTION_BATCH_SIZE) {
+    const batchRows = processRows.slice(i, i + EXTRACTION_BATCH_SIZE)
     const batchIndex = Math.floor(i / EXTRACTION_BATCH_SIZE)
 
     const batchRecords = await extractSOWBatch(
@@ -445,7 +461,7 @@ export async function extractSOWRecords(
       headers,
       batchRows,
       batchIndex,
-      rows.length,
+      processRows.length,
       year,
       platformFromTab
     )
@@ -453,7 +469,7 @@ export async function extractSOWRecords(
     allRecords.push(...batchRecords)
   }
 
-  console.log(`[SOW Extract] Tab "${tabName}" total: ${allRecords.length} records from ${rows.length} rows`)
+  console.log(`[SOW Extract] Tab "${tabName}" total: ${allRecords.length} records from ${processRows.length} rows`)
   return allRecords
 }
 

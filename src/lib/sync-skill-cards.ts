@@ -32,6 +32,11 @@ const SKILL_CARDS = [
     title: 'skill_legal_compliance',
     tags: ['skill', 'legal', 'compliance', 'contracts'],
   },
+  {
+    filename: 'skill_negotiation.md',
+    title: 'skill_negotiation',
+    tags: ['skill', 'negotiation', 'deals', 'rates', 'sow'],
+  },
 ]
 
 /**

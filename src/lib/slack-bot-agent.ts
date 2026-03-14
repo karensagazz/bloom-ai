@@ -86,15 +86,17 @@ For ANY question about a creator, campaign, deal, or brand performance:
 2. Call search_knowledge_documents — PDFs, presentations, meeting notes, brand briefs, performance insights, AND Slack messages (all searched at once)
 3. Call get_tracker_info — to know which trackers and tabs exist, and when last synced
 4. If steps 1-2 return blank fields or 0 results: call get_raw_tracker_data with the creator/topic as search. This returns EVERY original spreadsheet row with ALL columns — read it like opening the sheet directly.
-5. For questions about team decisions, discussions, or strategy: ALSO call get_slack_channel_history — the connected Slack channel has real team conversations that often contain critical context not in the tracker.
-6. Only after all relevant sources are checked: call submit_final_answer
+5. If the user asks for "current", "latest", "right now" data, or if synced data seems outdated: call read_live_sheet to pull the current values straight from Google Sheets in real time.
+6. For questions about team decisions, discussions, or strategy: ALSO call get_slack_channel_history — the connected Slack channel has real team conversations that often contain critical context not in the tracker.
+7. Only after all relevant sources are checked: call submit_final_answer
 
 You CANNOT say "no data found" without having searched campaigns, knowledge documents, AND raw tracker data.
 
 WHAT EACH SOURCE CONTAINS:
 - get_campaigns / search_influencers: Extracted campaign records (structured fields + full raw row)
 - search_knowledge_documents: Uploaded PDFs, presentations, meeting notes, strategy docs, performance insights, influencer notes, brand learnings, AND Slack channel messages
-- get_raw_tracker_data: The actual Google Sheet rows — ALL tabs that were synced, ALL columns, exactly as entered. This includes Paid Usage tabs, Dashboard tabs, Performance tabs, and any other tab in the sheet.
+- get_raw_tracker_data: The synced Google Sheet rows from the database — ALL tabs, ALL columns, as of last sync.
+- read_live_sheet: Real-time direct read from Google Sheets. Use when the user says "check now", "latest data", or when synced data seems stale or missing something recent.
 - get_slack_channel_history: Full history of the brand's connected Slack channel — team discussions, creator feedback, decisions, recommendations
 
 MEETING NOTES & STRATEGIC QUESTIONS:
@@ -153,11 +155,15 @@ NEVER say "structured fields are blank" — that's an internal system detail. Ju
 
 HOW TO ANSWER:
 
-Lead with the answer. Structure:
-1. Direct answer to what was asked (use the actual data you found, including from rawData)
-2. Supporting detail — what the data shows, any patterns you notice
-3. One-line data source note: _"From [Tracker Name], synced [date]"_
-4. Only mention data gaps if they genuinely prevent you from answering — and keep it brief
+RESPONSE LENGTH: Default to short. Most answers should be 3–6 sentences. Only go longer if the user explicitly asks for a full breakdown, analysis, or comparison. If you catch yourself writing more than 8 sentences unprompted — cut it.
+
+Structure:
+1. Direct answer to what was asked (1–2 sentences using the actual data)
+2. Key supporting detail — the most important number, pattern, or context (2–3 sentences max)
+3. One-line data note: _"From [Tracker Name], synced [date]"_
+4. Skip any section that adds no new information. No padding, no summaries of what you already said.
+
+For "full analysis" or "deep dive" requests: go deeper, but still be efficient — no repeated information, no restating the question.
 
 CONFIDENCE SCORING (honest, but don't be overly conservative):
 - 85-100%: Records found, key fields populated or readable from rawData, synced recently
@@ -235,8 +241,9 @@ NEVER fabricate metrics, campaign results, or sync timestamps. If something genu
 SLACK FORMATTING:
 - Use *bold* for creator names, key numbers, and important data points
 - Use _italic_ for source/sync info
-- Bullet lists only for multi-item breakdowns
-- Keep it tight — blank lines between sections, not between every sentence`
+- Bullet lists only when listing 3+ items that genuinely need breaking out — not for 2-item comparisons
+- Keep it tight — blank lines between sections only, not between every sentence
+- Never use headers (###) or horizontal rules (---) in Slack responses`
 
 // Tool definitions for the agent
 const tools: Anthropic.Tool[] = [
@@ -433,6 +440,32 @@ const tools: Anthropic.Tool[] = [
         limit: {
           type: 'number',
           description: 'Max rows to return (default 100, max 300). For a structural overview, use 20-30. For a specific creator, use 50.',
+        },
+      },
+      required: ['brandId'],
+    },
+  },
+  {
+    name: 'read_live_sheet',
+    description: 'Read the CURRENT live data directly from the connected Google Sheet — bypasses the database entirely and fetches fresh rows in real time. Use this when: (1) the user asks about something that might have changed since the last sync, (2) the user says "check the tracker now" or "latest data", (3) get_raw_tracker_data returns stale or missing results. Returns the actual live cell values for a specific tab or a search term across all tabs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        brandId: {
+          type: 'string',
+          description: 'The brand ID whose tracker to read',
+        },
+        tabName: {
+          type: 'string',
+          description: 'Optional: name of the specific tab to read (e.g. "Campaign Tracker", "Paid Usage"). If omitted, reads the first/main tab.',
+        },
+        search: {
+          type: 'string',
+          description: 'Optional: filter rows to those containing this text in any cell (case-insensitive). Use to find a specific creator or campaign.',
+        },
+        maxRows: {
+          type: 'number',
+          description: 'Max rows to return (default 100, max 300).',
         },
       },
       required: ['brandId'],
@@ -1025,6 +1058,74 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           extractedStatus: r.extractedStatus,
           originalRow: r.originalRow,
         })),
+      }
+    }
+
+    case 'read_live_sheet': {
+      // Fetch live data directly from Google Sheets — no DB, always fresh
+      const { tabName, search, maxRows = 100 } = toolInput
+      const cap = Math.min(maxRows, 300)
+
+      try {
+        const { discoverAllTabs, fetchAllTabs, extractSpreadsheetId } = await import('./google-sheets-public')
+
+        // Find the brand's tracker(s)
+        const trackers = await prisma.campaignTracker.findMany({
+          where: { brandId },
+          select: { spreadsheetId: true, label: true, lastSyncedAt: true },
+        })
+
+        if (trackers.length === 0) {
+          return { error: 'No campaign tracker connected to this brand.' }
+        }
+
+        const tracker = trackers[0] // Use first tracker
+        const tabs = await discoverAllTabs(tracker.spreadsheetId)
+
+        // Find the right tab
+        let targetTabs = tabs
+        if (tabName) {
+          const match = tabs.find(t => t.tabName.toLowerCase().includes(tabName.toLowerCase()))
+          if (match) targetTabs = [match]
+        }
+
+        const tabData = await fetchAllTabs(tracker.spreadsheetId, targetTabs.slice(0, 3)) // limit to 3 tabs max
+
+        // Flatten all rows with tab context
+        const searchLower = search?.toLowerCase()
+        const allRows: any[] = []
+
+        for (const tab of tabData) {
+          for (const row of tab.rows) {
+            const rowData = row.data
+            if (searchLower) {
+              const text = Object.values(rowData).map(v => String(v || '').toLowerCase()).join(' ')
+              if (!text.includes(searchLower)) continue
+            }
+            allRows.push({ tab: tab.tabName, ...rowData })
+            if (allRows.length >= cap) break
+          }
+          if (allRows.length >= cap) break
+        }
+
+        const allHeaders = new Set<string>()
+        allRows.forEach(r => Object.keys(r).forEach(k => allHeaders.add(k)))
+
+        return {
+          source: 'LIVE Google Sheet (real-time)',
+          spreadsheetId: tracker.spreadsheetId,
+          lastSynced: tracker.lastSyncedAt,
+          tabsRead: tabData.map(t => t.tabName),
+          totalRowsFound: allRows.length,
+          columnHeaders: Array.from(allHeaders),
+          rows: allRows,
+          note: search ? `Filtered to rows containing "${search}"` : 'All rows (up to cap)',
+        }
+      } catch (error: any) {
+        return {
+          error: `Failed to read live sheet: ${error.message}`,
+          suggestion: 'The sheet may not be publicly accessible, or there was a network error. Try get_raw_tracker_data instead.',
+        }
       }
     }
 

@@ -606,7 +606,7 @@ export default function SettingsPage() {
                 <div className="mb-4 p-4 bg-stone-50 rounded-lg">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-medium text-stone-900">Current Status</h3>
-                    <span className="text-xs text-stone-500">Expected: 4 cards per brand</span>
+                    <span className="text-xs text-stone-500">Expected: {skillCardStatus.expectedPerBrand} cards per brand</span>
                   </div>
                   <div className="space-y-2">
                     {skillCardStatus.brands && skillCardStatus.brands.map((brand: any) => (

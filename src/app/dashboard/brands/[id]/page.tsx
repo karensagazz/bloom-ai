@@ -300,33 +300,33 @@ export default function BrandDetailPage() {
   }, [syncing, brandId])
 
   async function handleSync() {
-    // Reset the ref at start of new sync
+    // Reset state at start of new sync
     syncLoadCompletedRef.current = false
-    setSyncing(true)
     syncStartTimeRef.current = Date.now()
+    setSyncing(true)
+
     try {
+      // POST kicks off background sync and returns immediately with { status: 'syncing' }.
+      // The progress poller (above) is responsible for detecting completion and
+      // calling setSyncing(false) — do NOT set it here, or polling would stop early.
       const response = await fetch(`/api/brands/${brandId}/sync`, { method: 'POST' })
 
       if (!response.ok) {
         const error = await response.json()
-        console.error('Sync failed:', error)
-        alert(error.error || `Sync failed: ${response.statusText}`)
+        console.error('Sync failed to start:', error)
+        alert(error.error || `Failed to start sync: ${response.statusText}`)
+        setSyncing(false)
         return
       }
 
-      const result = await response.json()
-      console.log('Sync completed:', result)
-      // Only load brand if polling hasn't already done it (prevents race condition)
-      if (!syncLoadCompletedRef.current) {
-        syncLoadCompletedRef.current = true
-        await loadBrand()
-      }
+      // Sync is running in background — polling loop will handle completion
+      console.log('Background sync started, polling for progress...')
     } catch (e) {
-      console.error('Failed to sync', e)
-      alert('Network error during sync')
-    } finally {
+      console.error('Failed to start sync', e)
+      alert('Network error — could not start sync')
       setSyncing(false)
     }
+    // NOTE: no finally { setSyncing(false) } — the poller owns that lifecycle
   }
 
   async function handleDelete() {

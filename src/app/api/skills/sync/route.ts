@@ -51,6 +51,7 @@ export async function GET() {
               { title: { contains: 'skill_performance_benchmarks' } },
               { title: { contains: 'skill_campaign_strategy' } },
               { title: { contains: 'skill_legal_compliance' } },
+              { title: { contains: 'skill_negotiation' } },
             ],
           },
         })
@@ -65,7 +66,7 @@ export async function GET() {
 
     return NextResponse.json({
       brands: skillCardCounts,
-      expectedPerBrand: 4,
+      expectedPerBrand: 5,
     })
   } catch (error) {
     console.error('[API] Skill card status error:', error)

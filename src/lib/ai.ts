@@ -5,13 +5,18 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 })
 
-// Anthropic client for Claude Sonnet (cheaper extraction tasks)
+// Anthropic client — used for both extraction (Haiku) and analysis (Sonnet)
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
 })
 
 // Timeout for AI API calls (prevents indefinite hangs during sync)
 const AI_TIMEOUT_MS = 45000  // 45 seconds max per AI call
+
+// Fast model for structured JSON extraction (sync tasks) — 5x faster & cheaper than Sonnet
+const EXTRACTION_MODEL = 'claude-haiku-4-5-20251001'
+// Full model for deep analysis and bot responses
+const ANALYSIS_MODEL = 'claude-sonnet-4-6'
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
   const timeout = new Promise<never>((_, reject) =>
@@ -20,8 +25,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string
   return Promise.race([promise, timeout])
 }
 
-// Get a cheap structured completion using Claude Sonnet
-// Used for data extraction tasks where we need JSON output
+// Get a cheap structured completion using Claude Haiku
+// Used for sync data extraction — Haiku is ~5x faster than Sonnet for JSON tasks
 export async function getCheapStructuredCompletion(
   systemPrompt: string,
   userPrompt: string,
@@ -30,7 +35,7 @@ export async function getCheapStructuredCompletion(
   try {
     const response = await withTimeout(
       anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: EXTRACTION_MODEL,
         max_tokens: maxTokens,
         system: systemPrompt,
         messages: [
@@ -100,7 +105,7 @@ export async function getChatCompletion(messages: Array<{ role: string; content:
 
     const response = await withTimeout(
       anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: ANALYSIS_MODEL,
         max_tokens: 1000,
         system: systemMessage?.content || 'You are a helpful assistant.',
         messages: anthropicMessages as any,

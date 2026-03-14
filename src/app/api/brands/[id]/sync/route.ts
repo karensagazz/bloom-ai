@@ -1,115 +1,91 @@
 import { NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { syncBrandPublicSheet } from '@/lib/google-sheets-public'
 import { syncBrandSlackChannel } from '@/lib/slack-client'
 import { syncAllBrandTrackers } from '@/lib/campaign-sync'
+import { resetSyncProgress } from '@/lib/sync-progress'
 import { prisma } from '@/lib/db'
 
-// Increase function timeout for large tracker syncs (Vercel Pro: max 300s)
-export const maxDuration = 300 // 5 minutes
+// Increase function timeout — allows background work to run up to 5 min after response
+export const maxDuration = 300 // 5 minutes (Vercel Pro)
 
 // POST /api/brands/[id]/sync - Trigger sync for a brand
+// Returns immediately with { status: 'syncing' } and runs the full sync in the background.
+// The frontend polls /api/brands/[id]/sync-progress for live updates.
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const startTime = Date.now()
-  console.log(`[Sync] Starting sync for brand ${params.id}`)
+  const { id: brandId } = await params
+  console.log(`[Sync] Received sync request for brand ${brandId}`)
 
-  try {
-    const brand = await prisma.brand.findUnique({
-      where: { id: params.id },
-      include: {
-        _count: { select: { campaignTrackers: true } },
-      },
-    })
+  // Validate the brand exists before kicking off background work
+  const brand = await prisma.brand.findUnique({
+    where: { id: brandId },
+    include: { _count: { select: { campaignTrackers: true } } },
+  })
 
-    if (!brand) {
-      return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
-    }
-
-    const results: {
-      trackers?: {
-        success: boolean
-        totalTabs?: number
-        totalRows?: number
-        totalRecords?: number
-        totalInfluencers?: number
-        results?: any[]
-        error?: string
-      }
-      // Legacy spreadsheet sync (for migration compatibility)
-      spreadsheet?: { success: boolean; rowCount?: number; error?: string }
-      slack?: { success: boolean; messageCount?: number; error?: string }
-    } = {}
-
-    // NEW: Sync all campaign trackers
-    if (brand._count.campaignTrackers > 0) {
-      try {
-        const trackerResult = await syncAllBrandTrackers(params.id, prisma)
-        results.trackers = {
-          success: trackerResult.results.every((r) => r.success),
-          totalTabs: trackerResult.totalTabs,
-          totalRows: trackerResult.totalRows,
-          totalRecords: trackerResult.totalRecords,
-          totalInfluencers: trackerResult.totalInfluencers,
-          results: trackerResult.results,
-        }
-      } catch (error: any) {
-        results.trackers = {
-          success: false,
-          error: error.message || 'Failed to sync trackers',
-        }
-      }
-    }
-
-    // LEGACY: Sync spreadsheet if connected (using public URL method)
-    // This is kept for backward compatibility during migration
-    if (brand.spreadsheetId && brand._count.campaignTrackers === 0) {
-      try {
-        const sheetResult = await syncBrandPublicSheet(params.id, prisma)
-        results.spreadsheet = {
-          success: true,
-          rowCount: sheetResult.rowCount,
-        }
-      } catch (error: any) {
-        results.spreadsheet = {
-          success: false,
-          error: error.message || 'Failed to sync spreadsheet',
-        }
-      }
-    }
-
-    // Sync Slack channel if connected
-    if (brand.slackChannelId) {
-      try {
-        const slackResult = await syncBrandSlackChannel(params.id)
-        results.slack = {
-          success: true,
-          messageCount: slackResult.messageCount,
-        }
-      } catch (error: any) {
-        results.slack = {
-          success: false,
-          error: error.message || 'Failed to sync Slack',
-        }
-      }
-    }
-
-    const elapsed = Date.now() - startTime
-    console.log(`[Sync] Completed in ${elapsed}ms`)
-    return NextResponse.json({ ...results, elapsed })
-  } catch (error: any) {
-    const elapsed = Date.now() - startTime
-    console.error(`[Sync] Failed after ${elapsed}ms:`, error)
-
-    // Always return JSON so client can parse the response
-    // (Vercel 504 timeout returns HTML, which causes the "Unexpected token" error)
-    return NextResponse.json({
-      success: false,
-      error: error.message || 'Failed to sync brand',
-      elapsed,
-      // Indicate partial data may have been saved if we got past initial stages
-      partial: elapsed > 30000,
-    }, { status: 500 })
+  if (!brand) {
+    return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
   }
+
+  // Mark as syncing immediately so the UI updates right away
+  await prisma.brand.update({
+    where: { id: brandId },
+    data: { syncStatus: 'syncing' },
+  })
+  await resetSyncProgress(prisma, brandId)
+
+  // ── BACKGROUND SYNC ────────────────────────────────────────────────────────
+  // waitUntil keeps the Vercel function alive after the HTTP response is sent.
+  // The client gets an instant acknowledgement; sync runs fully in the background.
+  // Progress is written to the DB and polled by the frontend every second.
+  // ──────────────────────────────────────────────────────────────────────────
+  waitUntil(
+    (async () => {
+      const startTime = Date.now()
+      console.log(`[Sync BG] Starting background sync for brand ${brandId}`)
+
+      try {
+        // Sync campaign trackers
+        if (brand._count.campaignTrackers > 0) {
+          await syncAllBrandTrackers(brandId, prisma)
+        }
+
+        // Legacy spreadsheet sync (brands without trackers)
+        if (brand.spreadsheetId && brand._count.campaignTrackers === 0) {
+          try {
+            await syncBrandPublicSheet(brandId, prisma)
+          } catch (err) {
+            console.error('[Sync BG] Legacy spreadsheet sync failed:', err)
+          }
+        }
+
+        // Sync Slack channel if connected
+        if (brand.slackChannelId) {
+          try {
+            await syncBrandSlackChannel(brandId)
+          } catch (err) {
+            console.error('[Sync BG] Slack sync failed:', err)
+          }
+        }
+
+        console.log(`[Sync BG] Completed in ${Date.now() - startTime}ms`)
+      } catch (error: any) {
+        console.error(`[Sync BG] Failed after ${Date.now() - startTime}ms:`, error)
+
+        // Mark as error so the UI shows the failure state
+        await prisma.brand.update({
+          where: { id: brandId },
+          data: { syncStatus: 'error' },
+        }).catch(() => {}) // swallow — DB might be unavailable
+      }
+    })()
+  )
+
+  // Return immediately — frontend will poll /sync-progress for updates
+  return NextResponse.json({
+    status: 'syncing',
+    message: 'Sync started in background. Poll /sync-progress for updates.',
+  })
 }

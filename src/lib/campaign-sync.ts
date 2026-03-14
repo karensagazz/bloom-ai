@@ -164,6 +164,28 @@ interface SyncResult {
   error?: string
 }
 
+// ============================================================================
+// CONCURRENCY HELPER - Run async tasks with a max parallelism limit
+// Avoids hammering the AI API while still processing multiple tabs at once
+// ============================================================================
+async function runConcurrent<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const i = nextIndex++
+      results[i] = await tasks[i]()
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker))
+  return results
+}
+
 // Sync a single campaign tracker (all tabs)
 export async function syncCampaignTracker(
   trackerId: string,
@@ -196,35 +218,27 @@ export async function syncCampaignTracker(
     let totalRows = 0
     let totalRecords = 0
 
-    // Compute processable tabs before the loop (all tabs except excluded ones)
-    // NOTE: We intentionally ignore tracker.selectedTabs here — that was a connection-time
-    // selection that often only included one tab. We now process ALL tabs and rely on
-    // shouldProcessTab() to exclude only truly irrelevant tabs (templates, archives, etc.)
+    // Compute processable tabs
     const processableTabs = tabData.filter(t => shouldProcessTab(t.tabName))
-    let processedTabCount = 0
 
-    // Store tab data and extract campaign records
+    // ── PHASE 1: Store all tab data to DB (fast, sequential) ─────────────────
+    // Upsert TrackerTab records and count rows before starting AI extraction.
+    // This ensures raw data is always persisted even if AI extraction fails.
+    await updateSyncProgress(
+      prisma,
+      tracker.brandId,
+      'processing_tabs',
+      `Saving ${processableTabs.length} tabs...`
+    )
+
     for (const tab of tabData) {
-      // Skip tabs that aren't processable (templates, archives, backups, etc.)
       if (!shouldProcessTab(tab.tabName)) {
         console.log(`⏭️  Skipping tab "${tab.tabName}" (excluded: template/archive/backup)`)
         continue
       }
 
-      // Per-tab sync progress
-      processedTabCount++
-      await updateSyncProgress(
-        prisma,
-        tracker.brandId,
-        'processing_tabs',
-        `"${tab.tabName}" (tab ${processedTabCount} of ${processableTabs.length}, ${tab.rows.length} rows)`
-      )
-
-      // Upsert TrackerTab record
       await prisma.trackerTab.upsert({
-        where: {
-          trackerId_gid: { trackerId, gid: tab.gid },
-        },
+        where: { trackerId_gid: { trackerId, gid: tab.gid } },
         create: {
           trackerId,
           gid: tab.gid,
@@ -246,16 +260,23 @@ export async function syncCampaignTracker(
       })
 
       totalRows += tab.rows.length
+    }
 
-      // Only process tabs with data
-      if (tab.rows.length > 0 && tab.headers.length > 0) {
+    // ── PHASE 2: AI extraction — run 3 tabs in parallel ──────────────────────
+    // Each tab calls Claude to extract structured records. Running 3 at once
+    // cuts total extraction time by ~3x vs sequential.
+    console.log(`\n🚀 Extracting records from ${processableTabs.length} tabs (3 in parallel)...`)
+    let completedTabs = 0
+
+    const extractionTasks = processableTabs
+      .filter(tab => tab.rows.length > 0 && tab.headers.length > 0)
+      .map(tab => async (): Promise<number> => {
         const tabDataType = getTabDataType(tab.tabName)
         console.log(`📋 Processing tab "${tab.tabName}" as: ${tabDataType}`)
+        let tabRecords = 0
 
         try {
-          // Route to appropriate extraction based on tab type
           if (tabDataType === 'contracts') {
-            // CONTRACTS TAB - Extract SOW/contract records
             console.log(`  📄 Extracting contracts from: ${tab.tabName}`)
             const platformHint = extractSOWPlatform(tab.tabName)
 
@@ -269,7 +290,6 @@ export async function syncCampaignTracker(
             )
 
             if (sowRecords.length > 0) {
-              // Use batch processing to avoid database statement size limits
               const sowData = sowRecords.map((record) => ({
                 brandId: tracker.brandId,
                 trackerId,
@@ -295,18 +315,14 @@ export async function syncCampaignTracker(
                 totalValue: parseValueToCents(record.dealValue),
               }))
               await batchCreateMany(prisma, 'campaignRecord', sowData)
-              totalRecords += sowRecords.length
-              console.log(`  ✅ Extracted ${sowRecords.length} contracts`)
+              tabRecords = sowRecords.length
+              console.log(`  ✅ Extracted ${sowRecords.length} contracts from "${tab.tabName}"`)
             }
 
           } else if (tabDataType === 'influencers') {
-            // INFLUENCERS TAB (SOW Review) - Skip here, handled by buildInfluencerRoster later
-            // Store raw data for influencer extraction
-            console.log(`  👥 SOW Review tab found - will extract influencers after campaign processing`)
-            // The data is already stored in TrackerTab, buildInfluencerRoster will use it
+            console.log(`  👥 SOW Review tab "${tab.tabName}" — raw data already stored`)
 
           } else if (tabDataType === 'campaigns') {
-            // CAMPAIGNS TAB - Extract campaign records
             console.log(`  📊 Extracting campaigns from: ${tab.tabName}`)
             const records = await extractCampaignRecords(
               tracker.brand.name,
@@ -317,7 +333,6 @@ export async function syncCampaignTracker(
             )
 
             if (records.length > 0) {
-              // Use batch processing to avoid database statement size limits
               const campaignData = records.map((record) => ({
                 brandId: tracker.brandId,
                 trackerId,
@@ -335,16 +350,29 @@ export async function syncCampaignTracker(
                 recordType: 'campaign',
               }))
               await batchCreateMany(prisma, 'campaignRecord', campaignData)
-              totalRecords += records.length
-              console.log(`  ✅ Extracted ${records.length} campaigns`)
+              tabRecords = records.length
+              console.log(`  ✅ Extracted ${records.length} campaigns from "${tab.tabName}"`)
             }
           }
         } catch (error) {
-          console.error(`Failed to extract records from tab ${tab.tabName}:`, error)
-          // Continue with other tabs
+          console.error(`  ❌ Extraction failed for tab "${tab.tabName}":`, error)
+          // Continue — other tabs should still complete
         }
-      }
-    }
+
+        // Update progress after each tab completes
+        completedTabs++
+        await updateSyncProgress(
+          prisma,
+          tracker.brandId,
+          'processing_tabs',
+          `"${tab.tabName}" (${completedTabs} of ${processableTabs.length} done)`
+        )
+
+        return tabRecords
+      })
+
+    const tabRecordCounts = await runConcurrent(extractionTasks, 3)
+    totalRecords = tabRecordCounts.reduce((sum, n) => sum + n, 0)
 
     // LOG: Sync summary
     console.log(`\n=== SYNC SUMMARY: ${tracker.label || tracker.id} ===`)
@@ -364,13 +392,12 @@ export async function syncCampaignTracker(
     // Generate brand intelligence summary
     await generateBrandIntelligence(tracker.brandId, prisma)
 
-    // === QUALITATIVE INTELLIGENCE EXTRACTION ===
-    console.log('\n=== EXTRACTING QUALITATIVE INSIGHTS ===')
+    // === QUALITATIVE INTELLIGENCE EXTRACTION (parallel, 3 at a time) ===
+    console.log('\n=== EXTRACTING QUALITATIVE INSIGHTS (parallel) ===')
     let totalInsights = 0
 
-    for (const tab of tabData) {
-      if (!shouldProcessTab(tab.tabName) || tab.rows.length === 0) continue
-
+    const insightTabs = tabData.filter(t => shouldProcessTab(t.tabName) && t.rows.length > 0)
+    const insightTasks = insightTabs.map(tab => async (): Promise<number> => {
       try {
         const insights = await extractCampaignInsights(
           tracker.brand.name,
@@ -381,7 +408,6 @@ export async function syncCampaignTracker(
         )
 
         if (insights.length > 0) {
-          // Store insights in database
           await prisma.campaignInsight.createMany({
             data: insights.map((insight) => ({
               brandId: tracker.brandId,
@@ -400,14 +426,17 @@ export async function syncCampaignTracker(
               quarter: insight.quarter || null,
             })),
           })
-          totalInsights += insights.length
           console.log(`  ✅ Stored ${insights.length} insights from "${tab.tabName}"`)
+          return insights.length
         }
       } catch (error) {
         console.error(`  ❌ Failed to extract insights from "${tab.tabName}":`, error)
-        // Continue with other tabs
       }
-    }
+      return 0
+    })
+
+    const insightCounts = await runConcurrent(insightTasks, 3)
+    totalInsights = insightCounts.reduce((sum, n) => sum + n, 0)
 
     console.log(`Total insights extracted: ${totalInsights}`)
 
