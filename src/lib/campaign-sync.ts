@@ -193,30 +193,19 @@ export async function syncCampaignTracker(
     // Fetch data from all tabs
     const tabData = await fetchAllTabs(tracker.spreadsheetId, tabs)
 
-    // Parse user-selected tabs (if any)
-    const selectedTabGids: string[] | null = tracker.selectedTabs
-      ? JSON.parse(tracker.selectedTabs)
-      : null
-
     let totalRows = 0
     let totalRecords = 0
 
-    // Compute processable tabs before the loop
-    const processableTabs = tabData.filter(t => {
-      if (selectedTabGids && !selectedTabGids.includes(t.gid)) return false
-      return shouldProcessTab(t.tabName)
-    })
+    // Compute processable tabs before the loop (all tabs except excluded ones)
+    // NOTE: We intentionally ignore tracker.selectedTabs here — that was a connection-time
+    // selection that often only included one tab. We now process ALL tabs and rely on
+    // shouldProcessTab() to exclude only truly irrelevant tabs (templates, archives, etc.)
+    const processableTabs = tabData.filter(t => shouldProcessTab(t.tabName))
     let processedTabCount = 0
 
     // Store tab data and extract campaign records
     for (const tab of tabData) {
-      // Skip tabs not in user's selection (if they made a selection)
-      if (selectedTabGids && !selectedTabGids.includes(tab.gid)) {
-        console.log(`⏭️  Skipping tab "${tab.tabName}" (not in user's selected tabs)`)
-        continue
-      }
-
-      // Skip tabs that aren't in the allowed list
+      // Skip tabs that aren't processable (templates, archives, backups, etc.)
       if (!shouldProcessTab(tab.tabName)) {
         console.log(`⏭️  Skipping tab "${tab.tabName}" (excluded: template/archive/backup)`)
         continue
