@@ -11,6 +11,7 @@ function loadSkillCards(): Record<string, string> {
     performance_benchmarks: 'skill_performance_benchmarks.md',
     campaign_strategy: 'skill_campaign_strategy.md',
     legal_compliance: 'skill_legal_compliance.md',
+    negotiation: 'skill_negotiation.md',
   }
 
   const loaded: Record<string, string> = {}
@@ -37,6 +38,7 @@ function buildSkillsBlock(): string {
     performance_benchmarks: 'PERFORMANCE BENCHMARKS — Use when evaluating or ranking creators/campaigns',
     campaign_strategy: 'CAMPAIGN STRATEGY — Use when advising on planning, briefs, or recommendations',
     legal_compliance: 'LEGAL & COMPLIANCE — Use when discussing contracts, SOWs, rates, or FTC rules',
+    negotiation: 'NEGOTIATION — Use when discussing deal terms, rates, SOW history, or helping write negotiation emails',
   }
 
   for (const [key, content] of Object.entries(ALL_SKILL_CARDS)) {

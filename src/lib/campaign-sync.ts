@@ -201,6 +201,13 @@ export async function syncCampaignTracker(
     let totalRows = 0
     let totalRecords = 0
 
+    // Compute processable tabs before the loop
+    const processableTabs = tabData.filter(t => {
+      if (selectedTabGids && !selectedTabGids.includes(t.gid)) return false
+      return shouldProcessTab(t.tabName)
+    })
+    let processedTabCount = 0
+
     // Store tab data and extract campaign records
     for (const tab of tabData) {
       // Skip tabs not in user's selection (if they made a selection)
@@ -211,9 +218,18 @@ export async function syncCampaignTracker(
 
       // Skip tabs that aren't in the allowed list
       if (!shouldProcessTab(tab.tabName)) {
-        console.log(`⏭️  Skipping tab "${tab.tabName}" (not in allowed list: Campaign Tracker, Dashboard, SOW Review, Contracts)`)
+        console.log(`⏭️  Skipping tab "${tab.tabName}" (excluded: template/archive/backup)`)
         continue
       }
+
+      // Per-tab sync progress
+      processedTabCount++
+      await updateSyncProgress(
+        prisma,
+        tracker.brandId,
+        'processing_tabs',
+        `"${tab.tabName}" (tab ${processedTabCount} of ${processableTabs.length}, ${tab.rows.length} rows)`
+      )
 
       // Upsert TrackerTab record
       await prisma.trackerTab.upsert({
@@ -539,7 +555,7 @@ export async function syncAllBrandTrackers(
 
   for (let i = 0; i < trackers.length; i++) {
     const tracker = trackers[i]
-    await updateSyncProgress(prisma, brandId, 'processing_tabs', tracker.label || `Tracker ${i + 1}/${trackers.length}`)
+    await updateSyncProgress(prisma, brandId, 'processing_tabs', `${tracker.label || 'Tracker'} (${i + 1} of ${trackers.length})`)
     const result = await syncCampaignTracker(tracker.id, prisma)
     results.push({
       trackerId: tracker.id,

@@ -214,6 +214,9 @@ export default function BrandDetailPage() {
   const [deleting, setDeleting] = useState(false)
   const [syncProgress, setSyncProgress] = useState<{ progress: number; step: string } | null>(null)
 
+  // Ref to track sync start time for time estimates
+  const syncStartTimeRef = useRef<number | null>(null)
+
   // Ref to prevent double loadBrand() calls during sync completion
   const syncLoadCompletedRef = useRef(false)
 
@@ -300,6 +303,7 @@ export default function BrandDetailPage() {
     // Reset the ref at start of new sync
     syncLoadCompletedRef.current = false
     setSyncing(true)
+    syncStartTimeRef.current = Date.now()
     try {
       const response = await fetch(`/api/brands/${brandId}/sync`, { method: 'POST' })
 
@@ -629,8 +633,20 @@ export default function BrandDetailPage() {
                   {syncing && syncProgress && (
                     <div className="mt-3 w-full max-w-md">
                       <div className="flex justify-between text-xs text-stone-600 mb-1">
-                        <span>{syncProgress.step}</span>
-                        <span>{syncProgress.progress}%</span>
+                        <span className="truncate max-w-xs">{syncProgress.step}</span>
+                        <span className="ml-2 shrink-0 text-stone-500">
+                          {syncProgress.progress}%
+                          {syncStartTimeRef.current && syncProgress.progress > 5 && (() => {
+                            const elapsed = Date.now() - syncStartTimeRef.current!
+                            const totalEstimate = elapsed / (syncProgress.progress / 100)
+                            const remaining = Math.max(0, totalEstimate - elapsed)
+                            const mins = Math.floor(remaining / 60000)
+                            const secs = Math.round((remaining % 60000) / 1000)
+                            return mins > 0
+                              ? ` · ~${mins}m ${secs}s left`
+                              : secs > 5 ? ` · ~${secs}s left` : ' · almost done'
+                          })()}
+                        </span>
                       </div>
                       <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
                         <div
