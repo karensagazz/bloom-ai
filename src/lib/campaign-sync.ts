@@ -67,56 +67,53 @@ async function batchCreateMany<T>(
 }
 
 // ============================================================================
-// TAB ROUTING - Explicit mapping of tabs to data types
+// TAB ROUTING - Process all useful tabs, skip only truly irrelevant ones
 // ============================================================================
 
 // Data types that can be extracted from tabs
 type TabDataType = 'campaigns' | 'contracts' | 'influencers' | 'skip'
 
-// EXCLUDED TABS - Never process these
+// EXCLUDED TABS - Only skip tabs that contain NO useful campaign/creator data
+// These are structural/utility tabs that have no content worth extracting
 const EXCLUDED_TABS = [
-  'paid usage',
-  'ad repository',
-  'paid extensions',
-  'paid media report',
-  'template', 'archive', 'old', 'copy', 'test', 'example',
-  'instructions', 'readme', 'help', 'notes', 'draft', 'backup',
-  'do not', 'dont', "don't", 'ignore', 'deprecated', 'unused'
+  'template', 'archive', 'old version', 'copy of', 'do not use',
+  'instructions', 'readme', 'help', 'backup',
+  'dont use', "don't use", 'ignore', 'deprecated', 'unused',
+  'change log', 'changelog',
 ]
 
-// ALLOWED TABS - Explicit mapping to data types
-// Format: { patterns: string[], dataType: TabDataType }
+// EXPLICIT MAPPINGS - Named tab types that should route to specific extractors
 const TAB_MAPPINGS: Array<{ patterns: string[], dataType: TabDataType }> = [
-  // Campaigns - from "Campaign Tracker" tab
-  { patterns: ['campaign tracker'], dataType: 'campaigns' },
-  // Also allow dashboard/overview tabs for campaigns
-  { patterns: ['dashboard', 'overview', 'summary', 'main', 'master'], dataType: 'campaigns' },
+  // Contracts / SOW tabs
+  { patterns: ['contracts', 'sow', 'scope of work', 'agreement', 'deal memo'], dataType: 'contracts' },
 
-  // Contracts - from "Contracts" tab
-  { patterns: ['contracts'], dataType: 'contracts' },
+  // Influencer roster tabs
+  { patterns: ['sow review', 'influencer roster', 'creator roster', 'talent list'], dataType: 'influencers' },
 
-  // Influencers - from "SOW Review" tab
-  { patterns: ['sow review'], dataType: 'influencers' },
+  // All other tabs default to 'campaigns' — the extraction AI can read any structure
 ]
 
 // Determine what type of data a tab contains
 function getTabDataType(tabName: string): TabDataType {
   const normalized = tabName.trim().toLowerCase()
 
-  // Check exclusions first
+  // Check exclusions first — skip only genuinely irrelevant tabs
   if (EXCLUDED_TABS.some(pattern => normalized.includes(pattern))) {
     return 'skip'
   }
 
-  // Check mappings
+  // Check explicit mappings
   for (const mapping of TAB_MAPPINGS) {
     if (mapping.patterns.some(pattern => normalized.includes(pattern))) {
       return mapping.dataType
     }
   }
 
-  // Skip unrecognized tabs
-  return 'skip'
+  // DEFAULT: Process ALL other tabs as campaigns
+  // This includes: Campaign Tracker, Dashboard, Paid Usage, Paid Media Report,
+  // Paid Extensions, Ad Repository, Performance, Analytics, Results, etc.
+  // The extraction AI will read whatever structure it finds.
+  return 'campaigns'
 }
 
 // Check if tab should be processed

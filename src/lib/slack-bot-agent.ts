@@ -80,13 +80,20 @@ TONE:
 HOW TO SEARCH (MANDATORY — follow every time):
 
 For ANY question about a creator, campaign, deal, or brand performance:
-1. Call get_campaigns and/or search_influencers — structured extracted data, primary source
-2. Call search_knowledge_documents — performance notes, insights, uploaded briefs, strategic learnings, AND MEETING NOTES
-3. Call get_tracker_info — to know which trackers exist and how fresh the data is
-4. If steps 1-2 return blank fields or 0 results: call get_raw_tracker_data with the creator/topic as the search term. This gives you the ACTUAL spreadsheet rows with every original column — read them like a human would read the sheet.
-5. Only after all sources are checked: call submit_final_answer
+1. Call get_campaigns and/or search_influencers — structured extracted data from the tracker
+2. Call search_knowledge_documents — PDFs, presentations, meeting notes, brand briefs, performance insights, AND Slack messages (all searched at once)
+3. Call get_tracker_info — to know which trackers and tabs exist, and when last synced
+4. If steps 1-2 return blank fields or 0 results: call get_raw_tracker_data with the creator/topic as search. This returns EVERY original spreadsheet row with ALL columns — read it like opening the sheet directly.
+5. For questions about team decisions, discussions, or strategy: ALSO call get_slack_channel_history — the connected Slack channel has real team conversations that often contain critical context not in the tracker.
+6. Only after all relevant sources are checked: call submit_final_answer
 
-You CANNOT say "no data found" without having used get_raw_tracker_data as a final fallback.
+You CANNOT say "no data found" without having searched campaigns, knowledge documents, AND raw tracker data.
+
+WHAT EACH SOURCE CONTAINS:
+- get_campaigns / search_influencers: Extracted campaign records (structured fields + full raw row)
+- search_knowledge_documents: Uploaded PDFs, presentations, meeting notes, strategy docs, performance insights, influencer notes, brand learnings, AND Slack channel messages
+- get_raw_tracker_data: The actual Google Sheet rows — ALL tabs that were synced, ALL columns, exactly as entered. This includes Paid Usage tabs, Dashboard tabs, Performance tabs, and any other tab in the sheet.
+- get_slack_channel_history: Full history of the brand's connected Slack channel — team discussions, creator feedback, decisions, recommendations
 
 MEETING NOTES & STRATEGIC QUESTIONS:
 
@@ -383,6 +390,28 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ['brandId', 'query'],
+    },
+  },
+  {
+    name: 'get_slack_channel_history',
+    description: 'Read messages from the brand\'s connected Slack channel (stored in the database). Use this to find team discussions about creators, campaigns, decisions, or any topic. The team often discusses strategy and feedback directly in Slack — this is valuable context for answering questions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        brandId: {
+          type: 'string',
+          description: 'The brand ID to query',
+        },
+        search: {
+          type: 'string',
+          description: 'Optional: filter messages to those containing this text (case-insensitive)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max messages to return (default 50, max 200)',
+        },
+      },
+      required: ['brandId'],
     },
   },
   {
@@ -818,16 +847,27 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
         }).catch(() => []),
       ])
 
-      const totalResults = documents.length + influencerNotes.length + campaignInsights.length + brandLearnings.length
+      // ALSO search Slack channel messages for team discussions
+      const slackMessages = await prisma.slackMessage.findMany({
+        where: {
+          brandId,
+          content: { contains: query, mode: 'insensitive' },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }).catch(() => [])
+
+      const totalResults = documents.length + influencerNotes.length + campaignInsights.length + brandLearnings.length + slackMessages.length
 
       if (totalResults === 0) {
         return {
           count: 0,
-          message: `No knowledge documents, influencer notes, insights, or learnings found matching "${query}". The data might be stored under a different name or may need to be re-synced.`,
+          message: `No knowledge documents, influencer notes, insights, learnings, or Slack messages found matching "${query}". Check if documents have been uploaded to the Knowledge Base or if the Slack channel has been synced.`,
           documents: [],
           influencerNotes: [],
           campaignInsights: [],
           brandLearnings: [],
+          slackMessages: [],
         }
       }
 
@@ -859,7 +899,53 @@ async function executeToolCall(toolName: string, toolInput: any): Promise<any> {
           recommendation: l.recommendation,
           category: l.category,
         })),
-        source: 'Knowledge Base + Related Data',
+        slackMessages: slackMessages.map((m: any) => ({
+          user: m.userName || 'Team Member',
+          text: m.content,
+          timestamp: m.createdAt,
+        })),
+        source: 'Knowledge Base + Slack Channel + Related Data',
+      }
+    }
+
+    case 'get_slack_channel_history': {
+      const { search, limit = 50 } = toolInput
+      const cap = Math.min(limit, 200)
+      const searchLower = search?.toLowerCase()
+
+      const messages = await prisma.slackMessage.findMany({
+        where: {
+          brandId,
+          ...(searchLower ? {
+            content: { contains: search, mode: 'insensitive' },
+          } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: cap,
+      })
+
+      // Reverse to chronological order
+      const chronological = [...messages].reverse()
+
+      if (chronological.length === 0) {
+        return {
+          count: 0,
+          message: search
+            ? `No Slack messages found mentioning "${search}". The channel may not have been synced yet, or no one has discussed this topic.`
+            : 'No Slack messages found. The channel may not have been synced yet.',
+          messages: [],
+        }
+      }
+
+      return {
+        count: chronological.length,
+        note: 'These are real messages from the brand\'s connected Slack channel. Team discussions here often contain context about creator relationships, campaign decisions, and strategic direction.',
+        messages: chronological.map(m => ({
+          user: m.userName || 'Team Member',
+          text: m.content,
+          timestamp: m.createdAt,
+          isThread: !!m.threadTs,
+        })),
       }
     }
 
