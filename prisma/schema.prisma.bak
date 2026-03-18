@@ -1,0 +1,598 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  name      String?
+  role      String   @default("member") // admin, member
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+  deals    Deal[]
+}
+
+// Brand = A company/client connected via Google Sheets campaign tracker
+model Brand {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  name              String
+
+  // Google Sheets connection - DEPRECATED, kept for migration only
+  // Use CampaignTracker model for new spreadsheet connections
+  spreadsheetId     String?           // Google Sheet ID (removed @unique for migration)
+  spreadsheetUrl    String?           // Full Google Sheets URL
+  sheetName         String?           // Specific tab/sheet name
+
+  // Slack connection
+  slackChannelId    String?
+  slackChannelName  String?
+
+  // Default brand for Slack (when no channel-specific mapping exists)
+  isDefault         Boolean  @default(false)
+
+  // Website intelligence
+  website           String?
+  websiteSummary    String?           // AI-generated summary of brand
+
+  // AI-extracted brand intelligence (from all campaign trackers)
+  brandIntelligence String?           // JSON: { summary, platforms, budgetRange, insights, etc. }
+
+  // Sync status (aggregate across all trackers)
+  lastSyncedAt      DateTime?
+  syncStatus        String   @default("pending") // pending, syncing, synced, error
+  syncProgress      Int?     @default(0)         // 0-100 percentage
+  syncStep          String?                      // Current step description
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  sheetRows         SheetRow[]        // DEPRECATED: kept for migration
+  slackMessages     SlackMessage[]
+  deals             Deal[]
+  notes             BrandNote[]
+  campaignTrackers  CampaignTracker[] // NEW: multiple spreadsheets per brand
+  brandInfluencers  BrandInfluencer[] // NEW: AI-extracted influencer roster
+  campaignRecords   CampaignRecord[]  // NEW: AI-extracted campaign data
+  campaignInsights        CampaignInsight[]
+  influencerNotes         InfluencerNote[]
+  brandLearnings          BrandLearning[]
+  trendAnalyses           TrendAnalysis[]
+  strategicRecommendations StrategicRecommendation[]
+  dataQualityFlags        DataQualityFlag[]
+  knowledgeFolders        KnowledgeFolder[]
+  knowledgeDocuments      KnowledgeDocument[]
+}
+
+// Flexible row storage - stores any spreadsheet structure as JSON
+model SheetRow {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String
+  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  rowIndex    Int      // Row number in sheet (0-indexed, excluding header)
+  data        String   // JSON object: { columnHeader: value, ... }
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([brandId, rowIndex])
+}
+
+// Slack messages indexed for brand context
+model SlackMessage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String
+  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  messageTs   String   // Slack timestamp (unique message ID)
+  channelId   String
+  userId      String?
+  userName    String?
+  content     String
+  threadTs    String?  // Parent thread timestamp (if reply)
+
+  createdAt   DateTime @default(now())
+
+  @@unique([brandId, messageTs])
+}
+
+model BrandNote {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId   String
+  content   String
+  createdAt DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model Creator {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  platform    String // "Instagram", "TikTok", "YouTube", "Twitter"
+  handle      String
+  followers   Int
+  archetype   String // e.g., "Lifestyle", "Fitness", "Tech Reviewer", "Fashion"
+  vertical    String // e.g., "Fashion", "Beauty", "Tech", "Food"
+  engagement  Float? // engagement rate percentage
+  categories  String // JSON array of categories
+  bio         String?
+  location    String?
+  email       String?
+  status      String   @default("active") // active, inactive
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals Deal[]
+}
+
+model Deal {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String
+  creatorId   String?
+  userId      String
+  title       String
+  description String?
+  status      String   @default("open") // open, in_progress, closed, cancelled
+  dealValue   Int? // in cents
+  startDate   DateTime?
+  endDate     DateTime?
+  priority    String   @default("medium") // low, medium, high
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  brand   Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  creator Creator? @relation(fields: [creatorId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  updates DealUpdate[]
+}
+
+model DealUpdate {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  dealId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String
+  role      String // "user" or "assistant"
+  content   String
+  metadata  String? // JSON metadata
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Match {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String   // Changed from clientId
+  creatorId   String
+  score       Float // 0-100 match score
+  reason      String // Why this is a good match
+  status      String   @default("pending") // pending, accepted, rejected
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// App settings (singleton-ish, use id="default")
+model Settings {
+  id                    String   @id @default("default") @map("_id")
+
+  // Slack configuration
+  slackBotToken         String?
+  slackSigningSecret    String?
+
+  // Google configuration
+  googleServiceEmail    String?
+  googlePrivateKey      String?
+
+  // OpenAI (already in env, but could store here)
+  openaiApiKey          String?
+
+  updatedAt             DateTime @updatedAt
+}
+
+// ============================================================================
+// CAMPAIGN INTELLIGENCE SYSTEM - Multi-tracker support with AI extraction
+// ============================================================================
+
+// CampaignTracker = One spreadsheet URL, multiple per brand (e.g., one per year)
+model CampaignTracker {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  spreadsheetUrl  String                    // Full Google Sheets URL
+  spreadsheetId   String                    // Extracted sheet ID
+  label           String?                   // e.g., "2024 Campaigns", "Q1 2024"
+  year            Int?                      // Year this tracker covers
+  selectedTabs    String?                   // JSON array of GIDs to sync (null = all tabs)
+
+  syncStatus      String    @default("pending") // pending, syncing, synced, error
+  lastSyncedAt    DateTime?
+  errorMessage    String?                   // Last error if syncStatus = "error"
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tabs            TrackerTab[]
+  campaignRecords CampaignRecord[]
+  campaignInsights  CampaignInsight[]
+
+  @@unique([brandId, spreadsheetId])        // One entry per sheet per brand
+}
+
+// TrackerTab = One tab/sheet within a spreadsheet
+model TrackerTab {
+  id          String          @id @default(auto()) @map("_id") @db.ObjectId
+  trackerId   String
+  tracker     CampaignTracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+
+  gid         String                      // Google Sheet tab GID
+  tabName     String                      // Human-readable tab name
+  tabIndex    Int                         // Order within spreadsheet
+  isEnabled   Boolean         @default(true) // Whether to process this tab during sync
+  rowCount    Int             @default(0) // Number of data rows
+  headers     String?                     // JSON array of column headers
+  rawData     String?                     // JSON array of row objects
+
+  syncedAt    DateTime        @default(now())
+
+  @@unique([trackerId, gid])
+}
+
+// BrandInfluencer = AI-extracted, deduplicated influencer roster per brand
+// Data comes from "SOW Review" tab in campaign tracker
+model BrandInfluencer {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  name            String                    // Influencer name
+  platform        String?                   // Primary platform: Instagram, TikTok, YouTube, etc.
+  email           String?                   // Contact email if available
+  estimatedRate   String?                   // e.g., "$5,000-$8,000"
+  totalCampaigns  Int      @default(0)      // Count of campaigns with this brand
+  notes           String?                   // AI-extracted observations
+  sourceRefs      String?                   // JSON: which tracker/tab rows this came from
+
+  // Fields from SOW Review tab
+  deliverables    String?                   // e.g., "2 IG Posts, 1 TikTok, 3 Stories"
+  term            String?                   // e.g., "6 months", "1 year"
+  paidUsageTerms  String?                   // e.g., "Perpetual", "1 year organic"
+  cohort          String?                   // Vertical/niche category: "Beauty", "Fashion", "Lifestyle", etc.
+  engagementRate  String?                   // e.g., "4.2%", "3.5%" (from tracker if available)
+  followerCount   String?                   // e.g., "250K", "1.2M" (raw string preserved)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  influencerNotes   InfluencerNote[]
+
+  @@unique([brandId, name])                 // Deduplicate by name within brand
+}
+
+// CampaignRecord = AI-extracted structured campaign data (campaigns + SOW deals)
+model CampaignRecord {
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  trackerId       String
+  tracker         CampaignTracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+
+  // Common fields
+  influencerName  String?                   // Name of the influencer
+  handle          String?                   // Social media handle (@username)
+  campaignName    String?                   // Campaign or product name
+  platform        String?                   // Instagram, TikTok, YouTube, etc.
+  contentType     String?                   // Post, Story, Reel, Video, UGC, etc.
+  dealValue       String?                   // Raw string, e.g., "$5,000"
+  status          String?                   // Completed, In Progress, Cancelled, etc.
+  year            Int?                      // Year of the campaign
+  quarter         String?                   // Q1, Q2, Q3, Q4
+  tabName         String?                   // Which tab this came from
+  rawData         String?                   // JSON: original row for reference
+
+  // SOW-specific fields (for recordType = "sow")
+  recordType      String          @default("campaign")  // "campaign" | "sow"
+  contractType    String?                   // flat_fee, cpm, hybrid, usage_rights, talent_fee
+  deliverables    String?                   // JSON array of deliverables [{type, quantity, platform}]
+  paymentTerms    String?                   // net_30, net_60, upon_delivery, 50_upfront
+  usageRights     String?                   // organic_only, paid_usage, perpetual, 1_year
+  exclusivity     String?                   // none, category_exclusive, full_exclusive
+  contractStart   String?                   // Contract start date (YYYY-MM-DD)
+  contractEnd     String?                   // Contract end date (YYYY-MM-DD)
+  totalValue      Int?                      // Total contract value in cents (for aggregation)
+
+  createdAt       DateTime        @default(now())
+}
+
+// ============================================================================
+// QUALITATIVE INSIGHTS & STRATEGIC INTELLIGENCE
+// ============================================================================
+
+// CampaignInsight = Qualitative learnings extracted from tracker notes/comments
+model CampaignInsight {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  trackerId       String?
+  tracker         CampaignTracker? @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+
+  // Insight classification
+  category        String                    // performance, creative, audience, timing, budget
+  sentiment       String                    // positive, negative, neutral, mixed
+
+  // Content
+  title           String                    // Brief insight headline
+  description     String                    // Detailed observation/learning
+
+  // Source tracking
+  sourceType      String                    // tracker_note, manual_entry, ai_detected
+  sourceRef       String?                   // JSON: which tab/row/cell this came from
+  confidence      String   @default("medium") // low, medium, high (AI extraction confidence)
+
+  // Context
+  influencerName  String?                   // Related influencer if applicable
+  campaignName    String?                   // Related campaign if applicable
+  platform        String?                   // Related platform if applicable
+  year            Int?                      // Year of observation
+  quarter         String?                   // Q1, Q2, Q3, Q4
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brandId, category])
+  @@index([brandId, year])
+}
+
+// InfluencerNote = Performance feedback and observations per influencer
+model InfluencerNote {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  influencerId    String
+  influencer      BrandInfluencer @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+
+  // Note classification
+  noteType        String                    // performance, reliability, creative_quality, audience_fit, communication
+  sentiment       String                    // positive, negative, neutral
+
+  // Content
+  content         String                    // The actual note/observation
+
+  // Source and verification
+  sourceType      String                    // campaign_data, manual_entry, ai_extracted
+  relatedCampaigns String?                  // JSON: array of campaign IDs this relates to
+  confidence      String   @default("medium") // low, medium, high
+
+  // Metadata
+  year            Int?                      // Year of observation
+  verified        Boolean  @default(false)  // Whether this has been human-verified
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brandId, influencerId])
+  @@index([brandId, noteType])
+}
+
+// BrandLearning = Strategic insights at brand level (cross-campaign patterns)
+model BrandLearning {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  // Learning classification
+  category        String                    // platform_strategy, budget_optimization, content_type, timing, audience
+  priority        String   @default("medium") // low, medium, high, critical
+
+  // Content
+  title           String                    // Brief learning headline
+  description     String                    // Detailed strategic insight
+  recommendation  String?                   // Actionable recommendation based on learning
+
+  // Evidence and confidence
+  supportingData  String?                   // JSON: references to campaigns/insights that support this
+  confidence      String   @default("medium") // low, medium, high
+  sampleSize      Int?                      // Number of data points this is based on
+
+  // Applicability
+  platforms       String?                   // JSON: array of platforms this applies to
+  timeframe       String?                   // When this learning is relevant: "ongoing", "seasonal", "2024-Q1"
+
+  // Status
+  status          String   @default("active") // active, archived, obsolete
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([brandId, title])
+  @@index([brandId, category])
+  @@index([brandId, priority])
+  @@index([brandId, status])
+}
+
+// TrendAnalysis = Detected patterns and trends across time/campaigns
+model TrendAnalysis {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  // Trend identification
+  trendType       String                    // growth, decline, seasonal, platform_shift, budget_change
+  metric          String                    // What's trending: engagement, spend, influencer_count, etc.
+  direction       String                    // increasing, decreasing, stable, volatile
+
+  // Content
+  title           String                    // Brief trend headline
+  description     String                    // Detailed trend analysis
+
+  // Quantitative backing
+  dataPoints      String                    // JSON: time series or comparison data
+  magnitude       Float?                    // Percentage change or significance score
+  confidence      String   @default("medium") // low, medium, high (statistical confidence)
+
+  // Time context
+  timeframe       String                    // "2024-Q1 to 2024-Q3", "YoY 2023-2024", etc.
+  detectedAt      DateTime @default(now())  // When this trend was detected
+
+  // Relevance
+  platforms       String?                   // JSON: platforms this trend relates to
+  influencers     String?                   // JSON: influencers involved if applicable
+
+  // Status
+  status          String   @default("active") // active, historical, invalidated
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brandId, trendType])
+  @@index([brandId, status])
+  @@index([brandId, detectedAt])
+}
+
+// StrategicRecommendation = AI-generated actionable advice
+model StrategicRecommendation {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  // Recommendation classification
+  category        String                    // budget, influencer_selection, platform, content_type, timing
+  priority        String   @default("medium") // low, medium, high, urgent
+
+  // Content
+  title           String                    // Brief recommendation headline
+  recommendation  String                    // Detailed actionable advice
+  rationale       String                    // Why this recommendation makes sense
+
+  // Supporting evidence
+  basedOn         String                    // JSON: references to insights, trends, campaigns
+  confidence      String   @default("medium") // low, medium, high
+  expectedImpact  String?                   // "10-20% efficiency gain", "reduce costs", etc.
+
+  // Implementation
+  effort          String?                   // low, medium, high (implementation difficulty)
+  timeframe       String?                   // When to act: "immediate", "Q1 2025", "next campaign"
+
+  // Status tracking
+  status          String   @default("pending") // pending, in_progress, implemented, dismissed
+  feedback        String?                   // User feedback on this recommendation
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brandId, category])
+  @@index([brandId, priority])
+  @@index([brandId, status])
+}
+
+// DataQualityFlag = Uncertainty and data quality markers
+model DataQualityFlag {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  // What's flagged
+  entityType      String                    // campaign, influencer, insight, trend, recommendation
+  entityId        String                    // ID of the flagged entity
+
+  // Issue classification
+  issueType       String                    // missing_data, conflicting_data, low_confidence, outdated, unverified
+  severity        String   @default("medium") // low, medium, high, critical
+
+  // Details
+  description     String                    // What's the specific issue
+  affectedFields  String?                   // JSON: which fields/data points are affected
+
+  // Resolution
+  status          String   @default("open")  // open, acknowledged, resolved, dismissed
+  resolution      String?                   // How this was resolved if applicable
+  resolvedAt      DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brandId, entityType, entityId])
+  @@index([brandId, issueType])
+  @@index([brandId, status])
+  @@unique([brandId, entityType, entityId, issueType]) // One flag per issue type per entity
+}
+
+// ============================================================================
+// KNOWLEDGE BASE - Hierarchical folder/document structure for organizing insights
+// ============================================================================
+
+// KnowledgeFolder = Hierarchical folder structure for organizing knowledge
+model KnowledgeFolder {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String
+  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  name        String                    // e.g., "Influencers", "Q4 2024 Review"
+  description String?                   // Optional folder description
+  icon        String?                   // Icon identifier: "folder", "users", "chart", "contract"
+
+  parentId    String?                   @db.ObjectId // Null for root folders
+  parent      KnowledgeFolder? @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    KnowledgeFolder[] @relation("FolderHierarchy")
+
+  folderType  String   @default("custom") // "system" (auto-generated), "custom" (user-created)
+  orderIndex  Int      @default(0)       // For manual sorting
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents   KnowledgeDocument[]
+
+  @@index([brandId, parentId])
+  @@index([brandId, folderType])
+}
+
+// KnowledgeDocument = Documents containing learnings, notes, or collections of insights
+model KnowledgeDocument {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  brandId     String
+  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  folderId    String?                   @db.ObjectId // Can be null for root-level documents
+  folder      KnowledgeFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  title       String                    // Document title
+  content     String?                   // Rich text content (markdown or JSON)
+
+  // Link to auto-generated data
+  documentType String                   // "manual", "insight_collection", "learning_collection", "trend_report", "recommendation_list", "influencer_notes"
+  sourceIds    String?                  // JSON array of IDs linking to insights/learnings/etc
+
+  // Metadata
+  isAutoGenerated Boolean @default(false) // True if created by sync process
+  lastEditedBy    String?               // User ID who last edited
+
+  // Organization
+  icon        String?                   // Document icon
+  orderIndex  Int      @default(0)      // For manual sorting within folder
+  tags        String?                   // JSON array of tags for search
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([brandId, folderId])
+  @@index([brandId, documentType])
+  @@index([brandId, isAutoGenerated])
+}

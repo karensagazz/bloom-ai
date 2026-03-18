@@ -51,15 +51,22 @@ export async function GET(
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
     }
 
-    // Parse JSON data in sheet rows (legacy)
+    // Parse JSON data in sheet rows (legacy) - with safe parsing
     const brandWithParsedData = {
       ...brand,
-      sheetRows: brand.sheetRows.map((row) => ({
+      sheetRows: brand.sheetRows?.map((row) => ({
         ...row,
-        data: JSON.parse(row.data),
-      })),
+        data: row.data ? (() => {
+          try {
+            return JSON.parse(row.data)
+          } catch {
+            console.warn(`[Brand ${params.id}] Invalid JSON in sheetRow ${row.id}`)
+            return {}
+          }
+        })() : {},
+      })) || [],
       // Add sowRecords as a separate filtered array for contracts
-      sowRecords: brand.campaignRecords.filter(record => record.recordType === 'sow'),
+      sowRecords: brand.campaignRecords?.filter(record => record.recordType === 'sow') || [],
     }
 
     return NextResponse.json(brandWithParsedData)
