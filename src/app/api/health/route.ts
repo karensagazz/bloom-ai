@@ -7,7 +7,7 @@ export async function GET() {
 
   // Check 1: Database connection
   try {
-    await prisma.$queryRaw`SELECT 1`
+    await prisma.$runCommandRaw({ ping: 1 })
     checks.database = { status: 'ok', connected: true }
   } catch (error: any) {
     checks.database = { status: 'error', connected: false, error: error.message }
