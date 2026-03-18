@@ -2,17 +2,17 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_DATABASE_URL") // Optional: for migrations, not required locally
 }
 
 model User {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   email     String   @unique
   name      String?
   role      String   @default("member") // admin, member
@@ -25,7 +25,7 @@ model User {
 
 // Brand = A company/client connected via Google Sheets campaign tracker
 model Brand {
-  id                String   @id @default(cuid())
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
   name              String
 
   // Google Sheets connection - DEPRECATED, kept for migration only
@@ -77,7 +77,7 @@ model Brand {
 
 // Flexible row storage - stores any spreadsheet structure as JSON
 model SheetRow {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String
   brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -92,7 +92,7 @@ model SheetRow {
 
 // Slack messages indexed for brand context
 model SlackMessage {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String
   brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -109,7 +109,7 @@ model SlackMessage {
 }
 
 model BrandNote {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId   String
   content   String
   createdAt DateTime @default(now())
@@ -118,7 +118,7 @@ model BrandNote {
 }
 
 model Creator {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   name        String
   platform    String // "Instagram", "TikTok", "YouTube", "Twitter"
   handle      String
@@ -138,7 +138,7 @@ model Creator {
 }
 
 model Deal {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String
   creatorId   String?
   userId      String
@@ -159,7 +159,7 @@ model Deal {
 }
 
 model DealUpdate {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   dealId    String
   content   String
   createdAt DateTime @default(now())
@@ -168,7 +168,7 @@ model DealUpdate {
 }
 
 model Message {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   userId    String
   role      String // "user" or "assistant"
   content   String
@@ -179,7 +179,7 @@ model Message {
 }
 
 model Match {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String   // Changed from clientId
   creatorId   String
   score       Float // 0-100 match score
@@ -191,7 +191,7 @@ model Match {
 
 // App settings (singleton-ish, use id="default")
 model Settings {
-  id                    String   @id @default("default")
+  id                    String   @id @default("default") @map("_id")
 
   // Slack configuration
   slackBotToken         String?
@@ -213,7 +213,7 @@ model Settings {
 
 // CampaignTracker = One spreadsheet URL, multiple per brand (e.g., one per year)
 model CampaignTracker {
-  id              String    @id @default(cuid())
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -239,7 +239,7 @@ model CampaignTracker {
 
 // TrackerTab = One tab/sheet within a spreadsheet
 model TrackerTab {
-  id          String          @id @default(cuid())
+  id          String          @id @default(auto()) @map("_id") @db.ObjectId
   trackerId   String
   tracker     CampaignTracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
 
@@ -259,7 +259,7 @@ model TrackerTab {
 // BrandInfluencer = AI-extracted, deduplicated influencer roster per brand
 // Data comes from "SOW Review" tab in campaign tracker
 model BrandInfluencer {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -289,7 +289,7 @@ model BrandInfluencer {
 
 // CampaignRecord = AI-extracted structured campaign data (campaigns + SOW deals)
 model CampaignRecord {
-  id              String          @id @default(cuid())
+  id              String          @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
   trackerId       String
@@ -328,7 +328,7 @@ model CampaignRecord {
 
 // CampaignInsight = Qualitative learnings extracted from tracker notes/comments
 model CampaignInsight {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
   trackerId       String?
@@ -363,7 +363,7 @@ model CampaignInsight {
 
 // InfluencerNote = Performance feedback and observations per influencer
 model InfluencerNote {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
   influencerId    String
@@ -394,7 +394,7 @@ model InfluencerNote {
 
 // BrandLearning = Strategic insights at brand level (cross-campaign patterns)
 model BrandLearning {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -430,7 +430,7 @@ model BrandLearning {
 
 // TrendAnalysis = Detected patterns and trends across time/campaigns
 model TrendAnalysis {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -469,7 +469,7 @@ model TrendAnalysis {
 
 // StrategicRecommendation = AI-generated actionable advice
 model StrategicRecommendation {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -505,7 +505,7 @@ model StrategicRecommendation {
 
 // DataQualityFlag = Uncertainty and data quality markers
 model DataQualityFlag {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId         String
   brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -541,7 +541,7 @@ model DataQualityFlag {
 
 // KnowledgeFolder = Hierarchical folder structure for organizing knowledge
 model KnowledgeFolder {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String
   brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
 
@@ -549,8 +549,8 @@ model KnowledgeFolder {
   description String?                   // Optional folder description
   icon        String?                   // Icon identifier: "folder", "users", "chart", "contract"
 
-  parentId    String?                   // Null for root folders
-  parent      KnowledgeFolder? @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  parentId    String?                   @db.ObjectId // Null for root folders
+  parent      KnowledgeFolder? @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children    KnowledgeFolder[] @relation("FolderHierarchy")
 
   folderType  String   @default("custom") // "system" (auto-generated), "custom" (user-created)
@@ -567,11 +567,11 @@ model KnowledgeFolder {
 
 // KnowledgeDocument = Documents containing learnings, notes, or collections of insights
 model KnowledgeDocument {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   brandId     String
   brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  folderId    String?                   // Can be null for root-level documents
-  folder      KnowledgeFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  folderId    String?                   @db.ObjectId // Can be null for root-level documents
+  folder      KnowledgeFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   title       String                    // Document title
   content     String?                   // Rich text content (markdown or JSON)

@@ -1339,7 +1339,12 @@ export async function runSlackAgent(options: {
 
     for (const toolUseBlock of toolUseBlocks) {
       console.log(`[Slack Agent] Executing tool: ${toolUseBlock.name}`)
-      const toolResult = await executeToolCall(toolUseBlock.name, toolUseBlock.input)
+      // Always force the channel-resolved brandId — never trust what the AI passes.
+      // This prevents the bot from accidentally reading another brand's data.
+      const toolResult = await executeToolCall(toolUseBlock.name, {
+        ...toolUseBlock.input as object,
+        brandId,
+      })
       console.log(`[Slack Agent] Tool result size: ${JSON.stringify(toolResult).length} chars`)
 
       // Store tracker info for confidence calculation
