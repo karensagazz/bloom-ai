@@ -7,66 +7,80 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    // First, fetch the brand without includes to ensure it exists
     const brand = await prisma.brand.findUnique({
       where: { id: params.id },
-      include: {
-        campaignTrackers: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            tabs: {
-              select: {
-                id: true,
-                tabName: true,
-                rowCount: true,
-                syncedAt: true,
-              },
-              orderBy: { tabIndex: 'asc' },
-            },
-            _count: {
-              select: { campaignRecords: true },
-            },
-          },
-        },
-        brandInfluencers: {
-          orderBy: { totalCampaigns: 'desc' },
-          take: 100,
-        },
-        campaignRecords: {
-          // Fetch both campaigns and SOW records (no recordType filter)
-          orderBy: { createdAt: 'desc' },
-          take: 1000,  // Increased from 200 to handle larger datasets
-        },
-        slackMessages: {
-          orderBy: { createdAt: 'desc' },
-          take: 50,
-        },
-        // Keep sheetRows for backward compatibility during migration
-        sheetRows: {
-          orderBy: { rowIndex: 'asc' },
-        },
-      },
     })
 
     if (!brand) {
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
     }
 
+    // Then fetch related data separately to handle empty relations gracefully
+    const [campaignTrackers, brandInfluencers, campaignRecords, slackMessages, sheetRows] = await Promise.allSettled([
+      prisma.campaignTracker.findMany({
+        where: { brandId: params.id },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          tabs: {
+            select: {
+              id: true,
+              tabName: true,
+              rowCount: true,
+              syncedAt: true,
+            },
+            orderBy: { tabIndex: 'asc' },
+          },
+          _count: {
+            select: { campaignRecords: true },
+          },
+        },
+      }),
+      prisma.brandInfluencer.findMany({
+        where: { brandId: params.id },
+        orderBy: { totalCampaigns: 'desc' },
+        take: 100,
+      }),
+      prisma.campaignRecord.findMany({
+        where: { brandId: params.id },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+      prisma.slackMessage.findMany({
+        where: { brandId: params.id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      prisma.sheetRow.findMany({
+        where: { brandId: params.id },
+        orderBy: { rowIndex: 'asc' },
+      }),
+    ])
+
     // Parse JSON data in sheet rows (legacy) - with safe parsing
+    const parsedSheetRows = (sheetRows.status === 'fulfilled' ? sheetRows.value : []).map((row) => ({
+      ...row,
+      data: row.data ? (() => {
+        try {
+          return JSON.parse(row.data)
+        } catch {
+          console.warn(`[Brand ${params.id}] Invalid JSON in sheetRow ${row.id}`)
+          return {}
+        }
+      })() : {},
+    }))
+
+    const allCampaignRecords = campaignRecords.status === 'fulfilled' ? campaignRecords.value : []
+
     const brandWithParsedData = {
       ...brand,
-      sheetRows: brand.sheetRows?.map((row) => ({
-        ...row,
-        data: row.data ? (() => {
-          try {
-            return JSON.parse(row.data)
-          } catch {
-            console.warn(`[Brand ${params.id}] Invalid JSON in sheetRow ${row.id}`)
-            return {}
-          }
-        })() : {},
-      })) || [],
+      campaignTrackers: campaignTrackers.status === 'fulfilled' ? campaignTrackers.value : [],
+      brandInfluencers: brandInfluencers.status === 'fulfilled' ? brandInfluencers.value : [],
+      campaignRecords: allCampaignRecords,
+      slackMessages: slackMessages.status === 'fulfilled' ? slackMessages.value : [],
+      sheetRows: parsedSheetRows,
       // Add sowRecords as a separate filtered array for contracts
-      sowRecords: brand.campaignRecords?.filter(record => record.recordType === 'sow') || [],
+      sowRecords: allCampaignRecords.filter(record => record.recordType === 'sow'),
     }
 
     return NextResponse.json(brandWithParsedData)
