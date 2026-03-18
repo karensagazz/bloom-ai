@@ -5,6 +5,8 @@ import { CreatorCard } from '@/components/creator-card'
 import { prisma } from '@/lib/db'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
+export const dynamic = 'force-dynamic'
+
 async function getCreators() {
   return await prisma.creator.findMany({
     orderBy: {
