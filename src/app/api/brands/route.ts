@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { extractSpreadsheetId } from '@/lib/google-sheets-public'
 
+export const dynamic = 'force-dynamic'
+
 // GET /api/brands - List all brands
 export async function GET() {
   try {
