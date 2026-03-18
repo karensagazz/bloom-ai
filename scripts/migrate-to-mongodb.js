@@ -10,53 +10,89 @@
  * - NEW_DATABASE_URL (MongoDB) - for writing
  */
 
-const { PrismaClient: PrismaPostgres } = require('@prisma/client');
+const { Pool } = require('pg');
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
-// Old connection string (PostgreSQL) - Using the active Supabase instance from screenshot
-const OLD_DB_URL = 'postgresql://postgres:quj!QNZ-ckz6axm@ghy@db.adklilkoxndbcwlqxeag.supabase.co:5432/postgres';
+// Old connection string (PostgreSQL) - Correct Supabase instance
+const OLD_DB_URL = 'postgresql://postgres:Yc0RXVbzcVGJ4Nm5@db.obgjnmqbezpzshhfkida.supabase.co:5432/postgres';
 
 // New connection string (MongoDB)
-const NEW_DB_URL = process.env.DATABASE_URL || 'mongodb+srv://karen_db_user:4aL4LP8CWrdaxZC7@bloom.opo7vku.mongodb.net/?appName=Bloom';
+const NEW_DB_URL = process.env.DATABASE_URL || 'mongodb+srv://karen_db_user:4aL4LP8CWrdaxZC7@bloom.opo7vku.mongodb.net/bloom?appName=Bloom';
 
-let pgClient, mongoClient, mongoDb;
+let pgPool, mongoClient, mongoDb;
 
 async function connect() {
   console.log('🔗 Connecting to Supabase PostgreSQL...');
-  pgClient = new PrismaPostgres({
-    datasources: {
-      db: {
-        url: OLD_DB_URL,
-      },
-    },
-  });
+  pgPool = new Pool({ connectionString: OLD_DB_URL });
+
+  // Test connection
+  await pgPool.query('SELECT 1');
+  console.log('✅ PostgreSQL connected');
 
   console.log('🔗 Connecting to MongoDB...');
   mongoClient = new MongoClient(NEW_DB_URL);
   await mongoClient.connect();
   mongoDb = mongoClient.db('bloom');
-  console.log('✅ Both databases connected\n');
+  console.log('✅ MongoDB connected\n');
 }
 
-async function migrateTable(tableName, fetchFn) {
-  console.log(`📥 Migrating ${tableName}...`);
-  const data = await fetchFn();
+// Transform PostgreSQL row to MongoDB document
+function transformRow(row, collectionName) {
+  const doc = { ...row };
 
-  if (data.length === 0) {
-    console.log(`   ℹ️  No records to migrate`);
-    return;
+  // Map id to _id for MongoDB
+  if (doc.id) {
+    doc._id = doc.id;
+    delete doc.id;
   }
 
-  const collection = mongoDb.collection(tableName);
+  // Special handling for Settings table - use "default" as _id
+  if (collectionName === 'Settings' && doc._id === 'default') {
+    // Keep _id as "default" string
+  }
 
-  // Clear existing data in MongoDB collection
-  await collection.deleteMany({});
+  // Convert timestamps to Date objects if needed
+  if (doc.createdAt && typeof doc.createdAt === 'string') {
+    doc.createdAt = new Date(doc.createdAt);
+  }
+  if (doc.updatedAt && typeof doc.updatedAt === 'string') {
+    doc.updatedAt = new Date(doc.updatedAt);
+  }
 
-  // Insert data
-  if (data.length > 0) {
-    await collection.insertMany(data);
-    console.log(`   ✅ Migrated ${data.length} records`);
+  return doc;
+}
+
+async function migrateTable(tableName, postgresTableName = null) {
+  const pgTable = postgresTableName || tableName;
+  console.log(`📥 Migrating ${tableName}...`);
+
+  try {
+    // Query PostgreSQL table
+    const result = await pgPool.query(`SELECT * FROM "${pgTable}"`);
+    const rows = result.rows;
+
+    if (rows.length === 0) {
+      console.log(`   ℹ️  No records found`);
+      return;
+    }
+
+    const collection = mongoDb.collection(tableName);
+
+    // Clear existing data in MongoDB collection
+    await collection.deleteMany({});
+
+    // Transform and insert data
+    const documents = rows.map(row => transformRow(row, tableName));
+    await collection.insertMany(documents);
+    console.log(`   ✅ Migrated ${documents.length} records`);
+
+  } catch (error) {
+    if (error.message.includes('does not exist')) {
+      console.log(`   ℹ️  Table does not exist in PostgreSQL, skipping`);
+    } else {
+      throw error;
+    }
   }
 }
 
@@ -65,40 +101,44 @@ async function migrate() {
     await connect();
 
     // Migrate all tables in dependency order
-    await migrateTable('User', () => pgClient.user.findMany());
-    await migrateTable('Settings', () => pgClient.settings.findMany());
-    await migrateTable('Brand', () => pgClient.brand.findMany());
-    await migrateTable('SheetRow', () => pgClient.sheetRow.findMany());
-    await migrateTable('SlackMessage', () => pgClient.slackMessage.findMany());
-    await migrateTable('BrandNote', () => pgClient.brandNote.findMany());
-    await migrateTable('Creator', () => pgClient.creator.findMany());
-    await migrateTable('Deal', () => pgClient.deal.findMany());
-    await migrateTable('DealUpdate', () => pgClient.dealUpdate.findMany());
-    await migrateTable('Message', () => pgClient.message.findMany());
-    await migrateTable('Match', () => pgClient.match.findMany());
-    await migrateTable('CampaignTracker', () => pgClient.campaignTracker.findMany());
-    await migrateTable('TrackerTab', () => pgClient.trackerTab.findMany());
-    await migrateTable('BrandInfluencer', () => pgClient.brandInfluencer.findMany());
-    await migrateTable('CampaignRecord', () => pgClient.campaignRecord.findMany());
-    await migrateTable('CampaignInsight', () => pgClient.campaignInsight.findMany());
-    await migrateTable('InfluencerNote', () => pgClient.influencerNote.findMany());
-    await migrateTable('BrandLearning', () => pgClient.brandLearning.findMany());
-    await migrateTable('TrendAnalysis', () => pgClient.trendAnalysis.findMany());
-    await migrateTable('StrategicRecommendation', () => pgClient.strategicRecommendation.findMany());
-    await migrateTable('DataQualityFlag', () => pgClient.dataQualityFlag.findMany());
-    await migrateTable('KnowledgeFolder', () => pgClient.knowledgeFolder.findMany());
-    await migrateTable('KnowledgeDocument', () => pgClient.knowledgeDocument.findMany());
+    await migrateTable('User');
+    await migrateTable('Settings');
+    await migrateTable('Brand');
+    await migrateTable('SheetRow');
+    await migrateTable('SlackMessage');
+    await migrateTable('BrandNote');
+    await migrateTable('Creator');
+    await migrateTable('Deal');
+    await migrateTable('DealUpdate');
+    await migrateTable('Message');
+    await migrateTable('Match');
+    await migrateTable('CampaignTracker');
+    await migrateTable('TrackerTab');
+    await migrateTable('BrandInfluencer');
+    await migrateTable('CampaignRecord');
+    await migrateTable('CampaignInsight');
+    await migrateTable('InfluencerNote');
+    await migrateTable('BrandLearning');
+    await migrateTable('TrendAnalysis');
+    await migrateTable('StrategicRecommendation');
+    await migrateTable('DataQualityFlag');
+    await migrateTable('KnowledgeFolder');
+    await migrateTable('KnowledgeDocument');
 
     console.log('\n✨ Migration complete!');
     console.log('All data has been transferred from Supabase PostgreSQL to MongoDB');
+    console.log('\nNext steps:');
+    console.log('1. Verify data: curl http://localhost:3000/api/brands');
+    console.log('2. Update Vercel environment: Add DATABASE_URL to production');
+    console.log('3. Redeploy: git push');
 
   } catch (error) {
     console.error('❌ Migration failed:', error.message);
     console.error(error);
     process.exit(1);
   } finally {
-    await pgClient.$disconnect();
-    await mongoClient.close();
+    if (pgPool) await pgPool.end();
+    if (mongoClient) await mongoClient.close();
   }
 }
 
