@@ -86,9 +86,14 @@ export async function GET(
     }
 
     return NextResponse.json(brandWithParsedData)
-  } catch (error) {
-    console.error('Failed to fetch brand:', error)
-    return NextResponse.json({ error: 'Failed to fetch brand' }, { status: 500 })
+  } catch (error: any) {
+    console.error('Failed to fetch brand:', error?.message || error)
+    console.error('Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)))
+    return NextResponse.json({
+      error: 'Failed to fetch brand',
+      details: error?.message || String(error),
+      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+    }, { status: 500 })
   }
 }
 
